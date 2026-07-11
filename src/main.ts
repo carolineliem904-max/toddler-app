@@ -18,7 +18,7 @@ const dpr = window.devicePixelRatio || 1;
 const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'app',
-  backgroundColor: '#2b2540',
+  backgroundColor: '#fff8ee',
   scale: {
     mode: Phaser.Scale.NONE,
     width: window.innerWidth * dpr,

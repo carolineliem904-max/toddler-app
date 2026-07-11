@@ -20,9 +20,14 @@ notes for the next slice).
 
 ## Conventions
 - One Phaser scene per file under `src/scenes/` (e.g. `src/scenes/MatchScene.ts`).
-- Gameplay content (colors, pairs, future themes) lives in plain data structures
-  under `src/data/`, kept separate from scene/mechanic code so new content sets
-  can be swapped in without touching game logic.
+- Gameplay content (themes, pairs, palette) lives in plain data structures under
+  `src/data/` — `src/data/themes.ts` (the `Theme`/`PairDef` model + the theme
+  rotation) and `src/data/palette.ts` (shared color constants).
+- Theme-specific drawing lives in `src/rendering/renderers.ts`, keyed by
+  `RendererKind`. `MatchScene` (the mechanic: selection, matching, lines,
+  celebration) must contain **zero theme-specific branches** — it only calls
+  through `RENDERERS[theme.renderer]`. Adding a new theme should mean adding
+  data (and at most one new renderer), never touching `MatchScene`.
 - `src/main.ts` stays thin: Phaser game config + boot only, no gameplay code.
 - Toddler-specific, non-negotiable UX rules (apply to every slice unless
   `HANDOFF.md` says otherwise):
