@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import './style.css';
+import { MenuScene } from './scenes/MenuScene';
 import { MatchScene } from './scenes/MatchScene';
 
 // Disable double-tap zoom, pinch zoom, pull-to-refresh, and the long-press
@@ -25,7 +26,9 @@ const game = new Phaser.Game({
     height: window.innerHeight * dpr,
     zoom: 1 / dpr,
   },
-  scene: [MatchScene],
+  // MenuScene first = the auto-started entry point; MatchScene is only ever
+  // started explicitly (from a menu card tap) with a theme via init data.
+  scene: [MenuScene, MatchScene],
 });
 
 let resizeTimer: number | undefined;

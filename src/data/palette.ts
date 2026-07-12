@@ -5,6 +5,8 @@ export const PALETTE = {
   yellow: 0xffd500,
   green: 0x34c759,
   blue: 0x0a84ff,
+  orange: 0xff9500,
+  purple: 0xaf52de,
 } as const;
 
 export const PALETTE_LIST: number[] = Object.values(PALETTE);

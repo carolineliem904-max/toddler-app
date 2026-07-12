@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { THEMES, shuffled, sameOrder, type PairDef, type ShapeKind, type Theme } from '../data/themes';
+import { THEMES, shuffled, sameOrder, type PairDef, type Theme } from '../data/themes';
 import { RENDERERS } from '../rendering/renderers';
 import { darken } from '../utils/color';
 
@@ -13,7 +13,7 @@ interface RoundItem {
 
 interface ResolvedItem {
   id: string;
-  shape?: ShapeKind;
+  pair: PairDef;
   leftColor: number;
   rightColor: number;
 }
@@ -40,10 +40,24 @@ interface Selection {
   side: 'left' | 'right';
 }
 
+interface MatchSceneData {
+  theme?: Theme;
+}
+
 const EDGE_MARGIN_PX = 60; // CSS px — nothing tappable closer to the screen edge than this
 const BACKGROUND_COLOR = 0xfff8ee;
+const HOME_BUTTON_SIZE_PX = 80;
+// The home button occupies css [60,140]x[60,140] (EDGE_MARGIN_PX + its own
+// size). Without extra clearance, row 0's left-column item — whose bounding
+// circle can reach up to ~90px radius — spatially overlaps that square, so a
+// tap there could unpredictably hit either the button or gameplay (verified
+// via headless testing: taps landed on the item instead of the button,
+// leaving Home unreachable). Push the whole grid's top edge below the
+// button's footprint instead of relying on z-order.
+const TOP_MARGIN_PX = EDGE_MARGIN_PX + HOME_BUTTON_SIZE_PX + 16;
 
 export class MatchScene extends Phaser.Scene {
+  private theme!: Theme;
   private leftItems: RoundItem[] = [];
   private rightItems: RoundItem[] = [];
   private selected: Selection | null = null;
@@ -53,7 +67,7 @@ export class MatchScene extends Phaser.Scene {
   private lines: LockedLine[] = [];
   private confettiTextureKey = 'confetti-particle';
   private lastSize = { w: 0, h: 0 };
-  private themeIndex = 0;
+  private homeButton: Phaser.GameObjects.Container | null = null;
 
   // Which side may start (or switch) a selection. Only 'left' is implemented
   // behaviorally — 'either' is a clean insertion point for when real-toddler
@@ -64,12 +78,19 @@ export class MatchScene extends Phaser.Scene {
     super('MatchScene');
   }
 
+  init(data: MatchSceneData): void {
+    // THEMES[0] fallback covers direct scene launches (e.g. during dev) that
+    // skip MenuScene and never pass a theme.
+    this.theme = data.theme ?? THEMES[0]!;
+  }
+
   create(): void {
     this.cameras.main.setBackgroundColor(BACKGROUND_COLOR);
     this.ensureConfettiTexture();
     this.lastSize = { w: this.scale.width, h: this.scale.height };
     this.scale.on('resize', this.handleResize, this);
     this.events.once('shutdown', () => this.scale.off('resize', this.handleResize, this));
+    this.createHomeButton();
     this.startRound();
   }
 
@@ -87,7 +108,50 @@ export class MatchScene extends Phaser.Scene {
     // size change; only restart (and reshuffle) when the size truly changed.
     if (w === this.lastSize.w && h === this.lastSize.h) return;
     this.lastSize = { w, h };
-    this.scene.restart();
+    this.scene.restart({ theme: this.theme });
+  }
+
+  private goHome(): void {
+    this.scene.start('MenuScene');
+  }
+
+  private createHomeButton(): void {
+    // create() re-runs on every scene.start('MatchScene', ...) and on resize
+    // restarts, but Phaser reuses the same Scene instance rather than a fresh
+    // one — without this, each re-entry would leak a new, still-interactive
+    // button stacked at the same position, and celebrate()'s disableInteractive()
+    // would only ever reach the newest one, leaving older leaked buttons
+    // tappable straight through a celebration (found via headless testing).
+    this.homeButton?.destroy();
+
+    const dpr = window.devicePixelRatio || 1;
+    const size = HOME_BUTTON_SIZE_PX * dpr;
+    // The button's nearest edge sits exactly on the 60px safe-margin line
+    // ("just inside," not deeper into the play area, per spec) rather than
+    // reusing gameplay item placement math.
+    const cx = this.px(EDGE_MARGIN_PX) + size / 2;
+    const cy = this.px(EDGE_MARGIN_PX) + size / 2;
+
+    const container = this.add.container(cx, cy);
+    const g = this.add.graphics();
+    const half = size / 2;
+    g.fillStyle(0xffffff, 0.92);
+    g.fillRoundedRect(-half, -half, size, size, size * 0.22);
+    g.lineStyle(Math.max(2, size * 0.04), 0x2b2b2b, 0.2);
+    g.strokeRoundedRect(-half, -half, size, size, size * 0.22);
+
+    const bodyW = size * 0.4;
+    const bodyH = size * 0.32;
+    g.fillStyle(0x8a5a34, 1);
+    g.fillRect(-bodyW / 2, size * 0.02, bodyW, bodyH);
+    g.fillStyle(0xe0483c, 1);
+    g.fillTriangle(-bodyW * 0.65, size * 0.02, bodyW * 0.65, size * 0.02, 0, -size * 0.28);
+    container.add(g);
+
+    container.setSize(size, size);
+    container.setInteractive();
+    container.on('pointerdown', () => this.goHome());
+    this.homeButton = container;
   }
 
   private computeLayout(rowCount: number): LayoutMetrics {
@@ -96,7 +160,7 @@ export class MatchScene extends Phaser.Scene {
     const cssH = this.scale.height / dpr;
 
     const usableW = cssW - EDGE_MARGIN_PX * 2;
-    const usableH = cssH - EDGE_MARGIN_PX * 2;
+    const usableH = cssH - TOP_MARGIN_PX - EDGE_MARGIN_PX;
 
     const cellH = usableH / rowCount;
     let radius = Math.max(60, Math.min(90, cellH * 0.35));
@@ -108,7 +172,7 @@ export class MatchScene extends Phaser.Scene {
 
     const rowYs: number[] = [];
     for (let i = 0; i < rowCount; i++) {
-      rowYs.push(EDGE_MARGIN_PX + cellH * i + cellH / 2);
+      rowYs.push(TOP_MARGIN_PX + cellH * i + cellH / 2);
     }
 
     return { dpr, leftX, rightX, rowYs, radius };
@@ -116,16 +180,16 @@ export class MatchScene extends Phaser.Scene {
 
   private startRound(): void {
     this.clearBoard();
+    this.homeButton?.setInteractive();
 
-    const theme = THEMES[this.themeIndex] ?? THEMES[0];
-    if (!theme) return;
+    const theme = this.theme;
     const renderer = RENDERERS[theme.renderer];
     const layout = this.computeLayout(theme.pairsPerRound);
 
     const sample: PairDef[] = shuffled(theme.pairs).slice(0, theme.pairsPerRound);
     const resolved: ResolvedItem[] = sample.map((pair) => ({
       id: pair.id,
-      shape: pair.shape,
+      pair,
       ...renderer.resolveInstance(pair),
     }));
 
@@ -142,14 +206,14 @@ export class MatchScene extends Phaser.Scene {
       const x = layout.leftX * layout.dpr;
       const y = (layout.rowYs[i] ?? 0) * layout.dpr;
       const r = layout.radius * layout.dpr;
-      this.leftItems.push(this.createItem(theme, item, x, y, r, 'left'));
+      this.leftItems.push(this.createItem(item, x, y, r, 'left'));
     });
 
     rightOrder.forEach((item, i) => {
       const x = layout.rightX * layout.dpr;
       const y = (layout.rowYs[i] ?? 0) * layout.dpr;
       const r = layout.radius * layout.dpr;
-      this.rightItems.push(this.createItem(theme, item, x, y, r, 'right'));
+      this.rightItems.push(this.createItem(item, x, y, r, 'right'));
     });
   }
 
@@ -169,9 +233,9 @@ export class MatchScene extends Phaser.Scene {
   // Theme-agnostic: drawing is fully delegated to RENDERERS[theme.renderer].
   // This method only wires up sizing, the (proven-working) rectangular hit
   // area, and the tap handler — it never branches on theme/renderer kind.
-  private createItem(theme: Theme, resolved: ResolvedItem, x: number, y: number, radius: number, role: 'left' | 'right'): RoundItem {
+  private createItem(resolved: ResolvedItem, x: number, y: number, radius: number, role: 'left' | 'right'): RoundItem {
     const color = role === 'left' ? resolved.leftColor : resolved.rightColor;
-    const visual = RENDERERS[theme.renderer].render({ scene: this, x, y, radius, role, color, shape: resolved.shape });
+    const visual = RENDERERS[this.theme.renderer].render({ scene: this, x, y, radius, role, color, pair: resolved.pair });
 
     // setInteractive() with no args uses the size from setSize() as a
     // rectangular hit area. A custom Phaser.Geom.Circle hitArea silently
@@ -339,6 +403,9 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private celebrate(): void {
+    // Home button is deliberately unreachable mid-celebration.
+    this.homeButton?.disableInteractive();
+
     [...this.leftItems, ...this.rightItems].forEach((item, idx) => {
       this.tweens.add({
         targets: item.container,
@@ -362,9 +429,9 @@ export class MatchScene extends Phaser.Scene {
       });
     }
 
-    this.time.delayedCall(2000, () => {
-      this.themeIndex = (this.themeIndex + 1) % THEMES.length;
-      this.startRound();
-    });
+    // Single-theme looping: the round after celebration is the same theme,
+    // freshly sampled. Theme rotation (Slice 2) was removed — MatchScene now
+    // always receives its theme from MenuScene via init data.
+    this.time.delayedCall(2000, () => this.startRound());
   }
 }

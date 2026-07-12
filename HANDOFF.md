@@ -1,145 +1,169 @@
-# HANDOFF — Toddler Matching Game, Slice 2
+# HANDOFF — Toddler Matching Game, Slice 3
 
 ## Context
-Slice 1 is complete: tap-tap color matching in `MatchScene`, data-driven off `src/data/pairs.ts`.
-Read the existing HANDOFF.md decisions/deviations section first (Phaser 3.90 pin, rectangular hitArea fix, ScaleManager double-restart guard).
-This slice: polish carryover + theme/level system. Do NOT build audio, settings, parent gate, or drag/trace — those are later slices.
+Slice 2 complete: theme system with renderer registry, 3 themes rotating endlessly in one scene.
+Read HANDOFF.md decisions/deviations first (Phaser 3.90 pin, Graphics-drawn triangle/star, ShapeHandle, initiateFrom flag).
+This slice: shapes difficulty fix + home menu + expand to 5 matching themes.
+Audio is NOT this slice. New mechanics (sorting, big/small, same/different) are NOT this slice.
 
-## Part A — Polish carryover from Slice 1 QA (do this first)
+## Part A — Shapes difficulty fix (do first, one-liner)
+Shapes theme currently matches cross-color (red triangle → green triangle). Too hard for 2–3:
+color actively misleads. Change the shapes resolver so rightColor = leftColor (same-color shape
+matching). Keep the cross-color code path reachable via data/config — it becomes the future
+"3–4 mode" difficulty step. Document the toggle in HANDOFF.md.
 
-1. **Color palette fix.** Current colors are muddy (olive yellow, brick red). Replace with high-saturation toddler-friendly primaries:
-   - red `0xFF3B30`, yellow `0xFFD500`, green `0x34C759`, blue `0x0A84FF`
-   - Define these in one palette file/constant — themes will reference it.
-2. **Light theme.** Replace the dark background with a soft light one (cream/off-white, e.g. `0xFFF8EE`). Ensure lines and confetti still read clearly against it (may need slightly darker line strokes).
-3. **Finished-pair treatment.** Matched pairs currently stay too prominent. Change to: ~35–40% alpha AND desaturated (grey-shift the tint), while the connecting line stays full-color and full-alpha. Remaining unmatched items stay fully vivid. Do NOT remove finished items — no layout shift.
+## Part B — Home menu scene
 
-## Part B — Theme & level system
+New `MenuScene`, the app's entry point.
+- Grid of large tappable game cards (min 160×160 px at phone size), one per theme.
+  Each card: colored panel + a representative icon drawn by that theme's renderer
+  (e.g. colors = red circle with eyes, shadows = grey star). NO TEXT on cards.
+- Tap card → short press-down animation → start `MatchScene` with that theme only.
+  The theme now loops itself (new random sample each round) instead of rotating to the next.
+- In `MatchScene`, add a small, out-of-the-way home button (top-left corner, simple house icon,
+  ~80×80 px — deliberately smaller than gameplay targets and in the 60px edge margin zone is
+  NOT allowed; place it just inside). Tap → back to menu. No confirmation dialog, but the button
+  must not be reachable mid-celebration (disable input on it during celebrate()).
+- Menu must be pleasant but calm: light background (existing cream), cards can bounce gently
+  on entry, no looping animations that compete with choice-making.
 
-Goal: adding a new worksheet type = adding data + (at most) one renderer, never touching mechanic code.
+Rationale for parent-facing note (put in HANDOFF.md): a menu this simple is toddler-operable,
+and that's intentional — self-directed choice is part of the pedagogy.
 
-### Data model
-- Extend the data layer to a `Theme` concept:
-```ts
-  interface Theme {
-    id: string;                 // "colors", "shapes", "shadows"
-    renderer: RendererKind;     // how items are drawn
-    pairs: PairDef[];           // pool, >= 6 per theme
-    pairsPerRound: 3 | 4;       // 3 for easier themes
-  }
-```
-- Each round randomly samples `pairsPerRound` pairs from the pool and shuffles right-column order (never mirror order, as now).
+## Part C — Two new matching themes (total: 5)
 
-### Themes to ship in this slice (3 total)
-1. **Colors** (existing) — migrate to new data model, new palette.
-2. **Shapes** — left: colored shape with eyes (circle, square, triangle, star); right: same shape in a DIFFERENT color. Matching is by shape, not color — this is deliberate (teaches shape abstraction). Placeholder Phaser graphics fine.
-3. **Shadows** — left: colored item; right: same silhouette in solid dark grey. Match item to its shadow. Reuse the shape renderer with a grey fill for now (real art comes later).
+Both use the existing mechanic + renderer registry. Placeholder Phaser-graphics art is fine,
+but keep every drawn object behind the renderer interface so real art can swap in later.
 
-### Renderer parameterization
-- Slice 1 HANDOFF notes say item-rendering methods need parameterizing — do that refactor now. `MatchScene` receives a theme and delegates drawing to a renderer keyed by `theme.renderer`. Mechanic code (selection, matching, lines, celebration) must be theme-agnostic.
+4. **Objects** (`objects`) — match identical simple objects (apple→apple, ball→ball, cup→cup,
+   fish→fish, flower→flower, car→car). Left side has eyes, right side identical but no eyes.
+   Same-object matching, color held constant. Pool ≥ 6, pairsPerRound: 4.
+5. **Object-to-destination** (`destinations`) — match object to where it belongs:
+   fish→bowl, car→road/garage, bird→nest, bee→flower, boat→water, ball→basket.
+   This is the first NON-IDENTICAL match, so it's the "hardest" theme: pairsPerRound: 3.
+   Destination art can be very simple (bowl = arc, nest = brown半circle, water = blue wavy rect).
+   Left = the object (with eyes), right = the destination (no eyes).
 
-### Theme progression (minimal)
-- After each full-board celebration, advance to the next theme in a fixed rotation (colors → shapes → shadows → colors …), new random sample each round.
-- No menu, no level select, no persistence this slice. The game is still one endless scene.
+Also: bump colors pool to 6 (add orange 0xFF9500, purple 0xAF52DE to palette) and shapes pool
+to 6 (add heart, diamond — Graphics-drawn like triangle/star), so every theme has genuine
+per-round sampling variety.
 
-### Interaction model — keep flexible (important)
-- Real-toddler QA on the left-first tap model is still pending. Refactor the selection logic so "which side can initiate a selection" is a single config flag (`initiateFrom: "left" | "either"`), default `"left"` (current behavior). Do NOT implement the `"either"` behavior beyond making the flag's insertion point clean — just don't paint the architecture into a corner.
+## Part D — Small structural change
+Theme rotation logic in MatchScene (themeIndex advance in celebrate()) is now dead — remove it.
+MatchScene receives its theme via scene init data from MenuScene. Single-theme looping only.
 
 ## Definition of done
-- All Part A polish visible and verified at 390×844 and 768×1024.
-- Three themes rotate correctly; right column never in mirror order; per-round random sampling works (verify across multiple rounds in headless test like Slice 1).
-- Mechanic code contains zero theme-specific branches.
-- `npm run dev` clean, no TS errors, no console errors.
-- HANDOFF.md updated: what was built, file map, decisions/deviations, notes for Slice 3 (audio hooks: note where correct/wrong/celebration events fire so SFX can attach cleanly).
+- All 5 themes launchable from menu, each looping with per-round sampling variety.
+- Home button works everywhere except during celebration.
+- Menu cards render via theme renderers (no hardcoded card art in MenuScene).
+- Same-color shapes verified; cross-color toggle documented but off.
+- Headless test: menu → each theme → play a full round → home → next theme, both viewports,
+  zero console errors. Screenshots of menu + each theme.
+- HANDOFF.md updated: file map, decisions/deviations, notes for Slice 4 (audio hook points
+  updated for menu: card-tap and home-button sounds; plus where per-theme intro voice line
+  should fire — MatchScene create() on theme start).
 
 ## Out of scope
-Audio, menus/level select, persistence, parent gate, settings, drag/trace mechanic, real art assets, deployment.
+Audio, persistence/progress, parent gate, settings, new mechanics (sorting, big/small,
+same/different, memory, counting, patterns), real art assets, deployment, age-mode selector.
 
 ---
 
-## Slice 2 status: DONE
+## Slice 3 status: DONE
 
-`npm run dev` clean, no TS errors (`npx tsc --noEmit` passes), no console errors. Verified
-with headless-browser interaction tests (Playwright) at both 390×844 and 768×1024, driving
-2+ full rotations through all three themes (6+ consecutive rounds) with real per-round data
-(not guessed taps), screenshotting each theme's initial/selected/wrong-match/switch/matched/
-celebration states.
+`npm run dev` clean, no TS errors (`npx tsc --noEmit` passes), no console errors. Verified with
+headless-browser tests (Playwright) at both 390×844 and 768×1024: menu → each of the 5 themes →
+play a full round → confirm celebration + same-theme reshuffle (loop, not rotation) → home →
+next theme, for all 5 themes, twice through (10 total rounds captured per viewport run, zero
+console errors). Mid-celebration home-button blocking verified in isolation with precise timing
+control (tap confirmed blocked while `celebrate()` is active, confirmed working again the instant
+the next round starts).
 
 ### File map
-- `src/data/palette.ts` — shared `PALETTE` (red/yellow/green/blue), `PALETTE_LIST`, `SHADOW_GREY`.
-- `src/data/themes.ts` — `Theme` / `PairDef` model, the 3 shipped themes (`colors`, `shapes`,
-  `shadows`) in fixed rotation order, `shuffled()` / `sameOrder()` helpers. Replaces Slice 1's
-  `src/data/pairs.ts`.
-- `src/rendering/renderers.ts` — all theme-specific drawing. `RENDERERS: Record<RendererKind, ...>`
-  exposes `resolveInstance(pair)` (per-round left/right color assignment) and `render(args)`
-  (draws the item, returns `{ container, applyMatchedStyle }`). `MatchScene` never branches on
-  theme/renderer kind — it only calls through this registry.
-- `src/utils/color.ts` — `desaturate()` / `darken()` color-blend helpers shared by the renderer
-  (finished-pair treatment) and `MatchScene` (line-stroke darkening).
-- `src/scenes/MatchScene.ts` — mechanic only: layout, selection state machine, tap handling,
-  line/confetti/celebration, theme rotation index. Zero theme-specific string literals (verified
-  via grep as part of QA).
-- `src/main.ts`, `src/style.css` — background color updated to the light theme (`#fff8ee`).
-- `CLAUDE.md` — conventions updated for the theme/renderer split.
+- `src/data/palette.ts` — `PALETTE` now has 6 colors (added `orange`, `purple`).
+- `src/data/themes.ts` — `PairDef` extended with `icon` / `leftIcon` / `rightIcon` (on top of
+  Slice 2's `color` / `shape`) for the two new themes; `ShapeKind` extended with `heart` /
+  `diamond`; 5 `THEMES` total (`colors`, `shapes`, `shadows`, `objects`, `destinations`); the
+  fixed-rotation array is now just an ordered list MenuScene iterates over, not a runtime cycle.
+- `src/rendering/renderers.ts` — two new renderers (`object`, `destination`); `RenderArgs` now
+  carries the full `pair: PairDef` instead of a flat `shape?` field, so new themes can add
+  whatever identity fields they need without widening `RenderArgs` itself.
+- `src/rendering/icons.ts` — new. 14 hand-drawn placeholder icons (apple, ball, cup, fish,
+  flower, car, bird, bee, boat, bowl, road, nest, water, basket) behind one `drawIcon()` /
+  `ICON_COLORS` interface, used by both `object` and `destination` renderers.
+- `src/rendering/shapeHandle.ts` — new. The `ShapeHandle` interface (`{ gameObject, setFillStyle }`)
+  pulled out of `renderers.ts` so `icons.ts` can share it without a circular import.
+- `src/utils/color.ts` — added `lighten()` for the menu's pastel card panels.
+- `src/scenes/MenuScene.ts` — new. The app's entry point: a 2-column grid of theme cards, each
+  rendered via `RENDERERS[theme.renderer]` (zero hardcoded card art), tap → brief press animation
+  → `scene.start('MatchScene', { theme })`.
+- `src/scenes/MatchScene.ts` — theme now arrives via `init(data)`, not a rotating index; theme
+  rotation logic removed (Part D). Added the home button (`createHomeButton()`), disabled during
+  `celebrate()` and re-enabled at the top of `startRound()`. Gameplay grid layout now reserves
+  extra top clearance (`TOP_MARGIN_PX`) so it never overlaps the home button's footprint.
+- `src/main.ts` — scene list is now `[MenuScene, MatchScene]`, MenuScene auto-starts.
+- `SLICE3.md` removed — its spec content now lives in this file, same as the Slice 2 → HANDOFF.md
+  consolidation last time.
 
 ### Decisions / deviations
-- **Pool size is 4 per theme, not the aspirational "≥ 6."** The spec's own theme list only names
-  4 colors and 4 shapes — there was nothing to fill a 6-item pool with without inventing content
-  outside spec. Colors and shapes use `pairsPerRound: 4` (the full pool every round — matches
-  Slice 1 behavior for colors, no real "sampling" happening since pool size == round size).
-  Shadows reuses the same 4-shape pool but ships as the "easier" theme via `pairsPerRound: 3`,
-  which *does* give genuine per-round sampling variety (a random 3-of-4 shapes each round,
-  verified in headless testing — two shadows rounds in the same session sampled different
-  subsets). Silhouette matching seemed like the most abstract/hardest of the three themes, so
-  it's the one that got the reduced pair count.
-- **Real Phaser bug: Triangle/Polygon game objects don't center on their `(x, y)` position the
-  way Arc/Rectangle do.** First shapes-theme render showed triangles and stars rendered
-  oversized and badly offset from their container, overlapping neighboring rows and clipping
-  off the top edge — screenshotted and caught before this got anywhere near a commit. Root
-  cause: `scene.add.triangle()` / `scene.add.polygon()` don't reliably auto-center like other
-  Shape subclasses. Fix: triangle and star are hand-drawn with `Graphics` (`drawPolygonWithGraphics`
-  in `renderers.ts`), whose points are authored already centered on local `(0,0)`, sidestepping
-  the origin quirk entirely. Circle and square still use native `Arc`/`Rectangle`, which do
-  center correctly. A `ShapeHandle` interface (`{ gameObject, setFillStyle }`) unifies both paths
-  so the matched-style dimming logic doesn't need to know which one it's dealing with.
-- **Shape/shadow color assignment resolved once per round, not per left/right render call.**
-  `RENDERERS[...].resolveInstance(pair)` runs once per pair per round and produces
-  `{ leftColor, rightColor }`, which both the left and right item's `render()` call then read.
-  This is what guarantees "shapes" theme's right-side color reliably differs from its own
-  left-side instance (a real per-instance constraint, not just per-render randomness that could
-  coincidentally match).
-- **Line color and confetti tint use the item's `leftColor`** regardless of theme (a generic
-  `RoundItem.lineColor` field every renderer populates), not a theme-aware color lookup — keeps
-  `MatchScene` theme-agnostic while still giving every theme a sensible line/confetti color.
-- **Confetti retinted for the light background.** Slice 1's white confetti particles would have
-  been near-invisible on `#fff8ee`; confetti now tints `[color, darken(color, 0.35), 0x333333]`.
-- **`initiateFrom` flag lives on `MatchScene`** (`private readonly initiateFrom: 'left' | 'either' = 'left'`),
-  not on `Theme` — it's an interaction-model concern orthogonal to theme content. The selection
-  logic was generalized into one `handleTap(item, side)` entry point with a `canInitiate(side)`
-  check; switching the flag to `'either'` would need `handleCorrectMatch`'s left/right resolution
-  to keep working (it already does, since it derives left/right from `selected.side` rather than
-  assuming `selected` is always the left item) but `'either'`'s actual UX (can either side start
-  a selection, and what does re-tapping the same side do) hasn't been designed or tested — per
-  spec, only the insertion point is done, not the behavior.
-- **SLICE2.md removed** — its spec content now lives in this file (the section above), so keeping
-  both would just create a second source of truth.
+- **Shapes same-color fix implemented as a module-level toggle**, `SHAPE_CROSS_COLOR_MODE` in
+  `renderers.ts`, currently `false`. Flipping it to `true` restores Slice 2's cross-color
+  behavior for a future difficulty mode — not wired to any UI this slice, per spec ("keep the
+  code path reachable," not "build the toggle UI").
+- **Menu grid uses a 24px edge margin, not gameplay's 60px** (`MENU_EDGE_MARGIN_PX` in
+  `MenuScene.ts`). The two requirements are mathematically incompatible at 390px phone width: 2
+  columns × 160px-minimum cards + any margin ≥60px each side doesn't fit (390 − 2×60 = 270px
+  available, 2×160px alone is already 320px). Since a menu of large, deliberate-tap choice cards
+  is a calmer interaction than fast-paced gameplay (the rationale behind the 60px rule was
+  guarding against *accidental* taps during energetic play), a reduced margin here is the
+  simplest resolution consistent with the toddler requirements. Gameplay's 60px margin is
+  untouched.
+- **Home-button/gameplay-grid overlap — a real bug caught by testing, not just a design
+  judgment call.** The home button occupies css `[60,140]×[60,140]`. Row 0's left-column item
+  (bounding circle up to ~90px radius, centered per the *old* layout formula) spatially
+  overlapped that square, so a tap in the shared region could hit either element unpredictably —
+  confirmed via headless testing: a tap at the button's center landed on the gameplay item
+  instead, leaving Home unreachable. Fixed by reserving extra clearance at the top of the
+  gameplay grid (`TOP_MARGIN_PX = EDGE_MARGIN_PX + HOME_BUTTON_SIZE_PX + 16`) rather than trying
+  to win the ambiguity via z-order.
+- **Home button leaked across scene re-entries — a second real bug, also caught by testing.**
+  `createHomeButton()` created a brand-new `Container` on every `create()` call (which re-runs
+  on every `scene.start('MatchScene', ...)` and on resize) but never destroyed the previous one.
+  Phaser reuses the same Scene *instance* across `start()` calls rather than constructing a fresh
+  one, so each menu round-trip left an orphaned, still-interactive button stacked at the same
+  position — and since `celebrate()`'s `disableInteractive()` only ever reached `this.homeButton`
+  (the newest reference), a leaked older button remained tappable straight through a celebration
+  after just one prior menu visit. Fixed with `this.homeButton?.destroy()` at the top of
+  `createHomeButton()`. Both bugs were found by scripting the *exact* interaction sequence a
+  toddler would produce (visit a theme, go home, visit another theme, complete a round) rather
+  than testing each theme in isolation — worth remembering for Slice 4's testing too.
+- **Icon color model:** each icon (`apple`, `bowl`, etc.) has one fixed color in
+  `ICON_COLORS` (`icons.ts`), not a per-round-randomized one. For `objects`, both sides use the
+  same icon's fixed color ("color held constant," per spec). For `destinations`, left/right are
+  *different* icons, each keeping its own fixed color — there's no shared-identity color to
+  preserve, so nothing needed to change on top of the objects-theme pattern.
+- **Menu card icon selection**: defaults to each theme's first pool pair rendered in the "left"
+  (friendly, eyed) role. Two overrides in `CARD_ICON_OVERRIDE` (`MenuScene.ts`): `shapes` uses
+  `square` instead of the pool's first entry (`circle`) — a circle icon would have been visually
+  indistinguishable from the `colors` card's circle blob; `shadows` and `destinations` render
+  their "right" role instead (grey star silhouette; blue bowl) since that's each theme's more
+  recognizable visual signature and avoids two theme cards both showing a generic colored
+  circle-with-eyes.
+- **Object/destination icons are hand-drawn Graphics**, not native Phaser Shapes — same
+  reasoning as Slice 2's triangle/star fix, applied consistently from the start this time.
 
-### Notes for Slice 3
-- **Audio hook points**, per Slice 3's likely need for SFX on correct/wrong/celebration:
-  - Correct match: `MatchScene.handleCorrectMatch()` in `src/scenes/MatchScene.ts` — top of the
-    method is where a "correct" sound should fire (before the bounce/line/confetti tweens start).
-  - Wrong match: `MatchScene.handleWrongMatch()` — fire a "wrong" sound at the top, before the
-    wiggle tween.
-  - Selection: `MatchScene.select()` — a soft "pop" here would reinforce the tap-selected state.
-  - Full-board celebration: `MatchScene.celebrate()` — top of the method, before the bounce/confetti
-    loops start.
-  - Theme change: the `themeIndex` increment happens inside `celebrate()`'s final `delayedCall` —
-    if Slice 3 wants a distinct "new theme" stinger separate from the celebration sound, that's
-    the insertion point.
-- **`initiateFrom: 'either'` is not implemented.** If real-toddler QA calls for it, the dispatch
-  point is `MatchScene.handleTap()` / `canInitiate()` — see decisions above for what already works
-  and what still needs design (mainly: UX for re-tapping the already-selected side under `'either'`).
-- **Theme pools are exactly at their "spec minimum" of 4.** If Slice 3 (or a later one) wants
-  colors/shapes to have genuine per-round sampling variety like shadows does, that means adding
-  more `PairDef`s to `COLOR_POOL`/`SHAPE_POOL` in `src/data/themes.ts` and dropping their
-  `pairsPerRound` below the pool size — no code changes needed beyond the data.
-- No audio, score, or persistence exists yet — still nothing for future slices to migrate away from.
+### Notes for Slice 4
+- **Audio hook points** (extends Slice 2's list, still accurate — `handleCorrectMatch()`,
+  `handleWrongMatch()`, `select()`, `celebrate()` in `MatchScene.ts`):
+  - Card tap: `MenuScene.createCard()`'s `pointerdown` handler, before the press-down tween starts.
+  - Home button tap: `MatchScene.createHomeButton()`'s `pointerdown` handler (`goHome()`), before
+    `this.scene.start('MenuScene')`.
+  - Per-theme intro voice line: top of `MatchScene.create()`, after `this.theme` is set (from
+    `init()`) — this fires once per theme *entry* (menu → theme), not per round within a theme,
+    since `startRound()` is what re-fires on every loop/reshuffle.
+- **`SHAPE_CROSS_COLOR_MODE`** in `renderers.ts` is the "3–4yo difficulty mode" seed mentioned in
+  Slice 2/3 handoffs — if Slice 4 or later adds an age-mode selector, this is the flag to wire up
+  (currently a hardcoded module constant, not read from anywhere dynamic).
+- **`initiateFrom: 'either'`** is still unimplemented (see Slice 2 notes — unchanged this slice).
+- Menu currently shows all 5 themes unconditionally with no progress/lock state — first thing a
+  persistence-adding slice would touch.

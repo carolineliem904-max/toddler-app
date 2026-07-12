@@ -18,3 +18,12 @@ export function darken(color: number, amount = 0.25): number {
   const b = Phaser.Math.Linear(c.blue, 0, amount);
   return Phaser.Display.Color.GetColor(r, g, b);
 }
+
+/** Blends a color toward white by `amount` (0-1). Used for pastel menu card panels. */
+export function lighten(color: number, amount = 0.8): number {
+  const c = Phaser.Display.Color.IntegerToColor(color);
+  const r = Phaser.Math.Linear(c.red, 255, amount);
+  const g = Phaser.Math.Linear(c.green, 255, amount);
+  const b = Phaser.Math.Linear(c.blue, 255, amount);
+  return Phaser.Display.Color.GetColor(r, g, b);
+}
