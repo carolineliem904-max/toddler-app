@@ -89,6 +89,10 @@ const FRUIT_POOL: PairDef[] = [
   { id: 'orange', emoji: '🍊', color: 0xff9500 },
   { id: 'strawberry', emoji: '🍓', color: 0xff3b30 },
   { id: 'watermelon', emoji: '🍉', color: 0x34c759 },
+  // Kept in the identical-match pool (color isn't the mechanic here) even
+  // though it's excluded from FRUIT_SORT's yellow bin — its red-green-yellow
+  // gradient is too ambiguous for the color-sorting teaching contract there.
+  { id: 'mango', emoji: '🥭', color: 0xf2a93b },
 ];
 
 export const THEMES: Theme[] = [

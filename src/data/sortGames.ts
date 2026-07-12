@@ -28,10 +28,15 @@ export interface SortGame {
 }
 
 // First (and only, this slice) sort game: fruit color sorting. Pool is
-// exactly 6 items (3 red, 3 yellow/orange) and itemsPerRound uses the whole
-// pool each round for a balanced 3-vs-3 split — simplest option consistent
-// with the spec's "4-6 items" range; partial sampling can come later if a
-// bigger pool is added.
+// exactly 6 items (3 red, 3 yellow) and itemsPerRound uses the whole pool
+// each round for a balanced 3-vs-3 split — simplest option consistent with
+// the spec's "4-6 items" range; partial sampling can come later if a bigger
+// pool is added.
+// Yellow bin is lemon/pineapple/banana, not orange/mango — both of those
+// are ambiguous-colored (orange is orange, not yellow; mango is a
+// red-green-yellow gradient) and undermine the color-sorting teaching
+// contract for 2-3yo. They still appear in the `fruits` MATCHING theme
+// (themes.ts), where identity, not color, is the mechanic.
 export const FRUIT_SORT: SortGame = {
   id: 'fruitsort',
   bins: [
@@ -43,8 +48,8 @@ export const FRUIT_SORT: SortGame = {
     { emoji: '🍓', category: 'red' },
     { emoji: '🍉', category: 'red' },
     { emoji: '🍌', category: 'yellow' },
-    { emoji: '🍊', category: 'yellow' },
-    { emoji: '🥭', category: 'yellow' },
+    { emoji: '🍋', category: 'yellow' },
+    { emoji: '🍍', category: 'yellow' },
   ],
   itemsPerRound: 6,
   cardEmoji: '🧺',

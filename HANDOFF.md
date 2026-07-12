@@ -161,8 +161,15 @@ game a physical spin on an actual phone/simulator before fully trusting this**, 
   `FRUIT_POOL`/`fruits`, each pair carrying an approximate identity `color` (see decisions).
 - `src/data/sortGames.ts` — new. `SortBinDef` (`id`, `accepts` category, `tint`),
   `SortItemDef` (`emoji`, `category`), `SortGame` (`bins`, `itemPool`, `itemsPerRound`,
-  `cardEmoji`, `cardColor`). `FRUIT_SORT`: 2 bins (red/yellow), 6-item pool (3 red, 3
-  yellow/orange), `itemsPerRound: 6` (uses the whole pool — balanced 3v3 split every round).
+  `cardEmoji`, `cardColor`). `FRUIT_SORT`: 2 bins (red/yellow), 6-item pool (3 red: 🍎🍓🍉,
+  3 yellow: 🍌🍋🍍), `itemsPerRound: 6` (uses the whole pool — balanced 3v3 split every
+  round). **Post-Slice-5 data fix:** the yellow bin originally included 🍊 (orange) and 🥭
+  (mango) — both color-ambiguous (orange isn't yellow; mango is a red-green-yellow gradient)
+  and undermined the color-sorting teaching contract for 2-3yo. Replaced with 🍋/🍍. Both
+  fruits stay available in the `fruits` MATCHING theme (`FRUIT_POOL`, `themes.ts`), where
+  identity rather than color is the mechanic — mango was added there too since it hadn't
+  previously appeared in any pool. Verified headless: one full fruit-sort round (correct
+  pool composition, 6/6 sorted, celebration + reshuffle), zero console errors.
 - `src/data/menuEntries.ts` — new. `MenuEntry = { kind: 'match', theme } | { kind: 'sort',
   game }`, `MENU_ENTRIES` = all `THEMES` + all `SORT_GAMES` mapped into one list. This is the
   "minimal menu data model refactor" the spec asked for.
