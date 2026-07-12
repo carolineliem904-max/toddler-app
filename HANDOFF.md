@@ -364,7 +364,152 @@ a blocker for shipping the game, only for the narrated experience.
   unimplemented-seed pattern) are all still-unimplemented seeds for a future difficulty/age-mode
   toggle.
 - Menu still shows all entries unconditionally with no progress/lock state; mute state still
-  resets to ON every load (no persistence) — both unchanged, matches this slice's scope.
+  resets to unmuted (audio ON) every load (no persistence) — both unchanged, matches this
+  slice's scope. (Rephrased from "resets to ON" — ambiguous wording that could misread as
+  "resets to muted"; `AudioManagerImpl.muted` defaults to `false`, confirmed again during the
+  audio-bug investigation below.)
 - `AudioManager` remains a plain module-level singleton (now shared across 4 scenes instead of
   3) — still fine at this scale; revisit only if a non-scene context (e.g. a future parent gate)
   needs audio.
+
+---
+
+## Post-Slice-6 investigation: "all game audio has stopped working" (user report)
+
+**Conclusion: no reproducible code-level regression found.** Extensive testing (below) shows
+every audio call path — menu click, select, correct match, wrong match, celebration, sort
+pickup, sort correct-drop, quiz correct, quiz wrong — fires exactly the expected WebAudio calls,
+byte-identical to the last-known-good Slice 5 commit (`4eb9f62`), in both the dev server and a
+production (`vite build` + `vite preview`) build, under both mouse-click and real-touch-tap
+event simulation. A permanent regression guard (`scripts/verify-audio-paths.ts`, see below) now
+asserts this automatically; it currently passes with zero failures.
+
+### What was checked (Step 1 — reproduce & characterize)
+Since this sandbox has no real speaker output, "does it play" was verified via the closest
+faithful proxy: wrapping the real `AudioContext`/`OscillatorNode`/`AudioBufferSourceNode` with a
+Playwright `addInitScript` (injected before any app code runs — zero source changes needed for
+the wrapping itself) that logs every `.start()` call and every `statechange`/`resume()`. This
+answers "did the exact WebAudio call that produces sound actually fire" as precisely as
+headless testing can, short of literally listening.
+- **(a) Does any sound play?** Every checked interaction produced the expected oscillator
+  `.start()` count (see the regression script's asserted values). No path was silently skipped.
+- **(b) Console errors?** None, across every run (dev, prod, mouse, touch). The one recurring
+  `console.info` (`16/16 voice line(s) not found`) is the long-documented, expected zero-mp3s
+  state (HANDOFF Slice 4/5/6), not an error.
+- **(c) AudioContext state.** Constructed `suspended` at boot (Phaser's own internal context —
+  logged separately from `AudioManager`'s own context, see below), transitions to `running`
+  within the same synthetic gesture that calls `AudioManager.unlock()`. `AudioManager`'s own
+  context is frequently already `running` at construction time in this sandbox's Chromium
+  (constructed mid-gesture, after the "requires a user gesture" bar is already cleared) — this
+  is a Chromium/headless nuance, not a bug; either way `resume()`'s promise always resolves to
+  `running`.
+- **(d) Mute flag at boot.** `AudioManagerImpl.muted` is a private field defaulting to `false`
+  (unmuted); confirmed both by reading the code and by screenshot (the mute button renders the
+  unmuted speaker-with-sound-waves icon on a fresh load, never the muted/strikethrough icon).
+  No persistence (`localStorage`/`sessionStorage`) reads or writes exist anywhere in
+  `AudioManager.ts` — the flag cannot carry over from a prior session.
+
+### Bisection (Step 2)
+Diffed `4eb9f62` (Slice 5, last confirmed working) against `HEAD` for every file touching audio:
+`src/audio/AudioManager.ts` (additive only — the `hasVoice()` query method, see Slice 6 file
+map), `src/main.ts` (additive only — `QuizScene` import/registration; the capture-phase
+`unlock()` listener and Phaser game config are untouched), `src/scenes/MenuScene.ts`'s mute
+button code (untouched). `index.html` and `src/style.css` have **zero diff** across the whole
+range. Given the diff alone showed nothing suspicious, ran the *identical* click/select/correct/
+celebrate diagnostic against an isolated `git worktree` checkout of `4eb9f62` (separate port,
+separate `node_modules`) and compared oscillator counts head-to-head with current `HEAD`:
+every single count matched exactly (1 / 1 / 3 / 12 for menu-click / select / correct / celebrate,
+respectively, in both). There is no commit in the `ec68ad0`..`HEAD` range that changes this
+behavior — the two Slice 6 commits and the fruit-sort data fix were all correctly ruled out as
+suspects.
+
+### Suspect-area checklist (all ruled out)
+- **Resume-on-first-gesture wiring.** Still a single global capture-phase `document`
+  `'pointerdown'` listener in `main.ts`, unchanged since Slice 4 — never per-scene, so QuizScene
+  needed (and required) zero changes to this wiring, and got none.
+- **Slice 6 test-instrumentation cleanup.** Re-read both cleanup diffs
+  (`console.debug('[TEST] ...')` removal, `window.__game` removal) commit-by-commit — nothing
+  audio-adjacent was touched; only diagnostic-only additions from that same session were removed.
+- **Mute-state handling.** Not persisted, not inverted — see 1(d) above.
+- **Autoplay policy / required-before-gesture sounds.** No sound is ever scheduled before
+  `unlock()`'s gesture-triggered `AudioContext` construction; `sfx()`/`voice()` both guard on
+  `!this.ctx` and no-op if called too early (they aren't, in practice — every scene's first
+  possible sound-triggering tap is itself the unlocking gesture).
+
+### Fix applied (Step 3)
+**None — no root cause to fix.** Since the instructions were explicit not to jump to a fix, and
+none of the above investigation surfaced a genuine defect, no source change was made to
+`AudioManager.ts`, `main.ts`, or any scene's audio-triggering code. (One cosmetic HANDOFF wording
+fix was made — the ambiguous "resets to ON" mute-state note above — since it could itself mislead
+a future audio investigation.)
+
+**What's likely actually happening**, given a real user reported real silence with a codebase
+that cannot be made to reproduce that silence under any tested condition: something *outside*
+this codebase's control. In descending order of likelihood for "previously worked, now silent,
+zero errors, unfixable by re-reading the code":
+1. **Browser or OS-level mute** — most browsers mute *per-tab* independent of in-page JS (a click
+   on the tab's own speaker icon, or Chrome's site-level Settings → Sound → "Don't allow sites to
+   play sound" applied to this origin). This produces exactly the reported symptom: WebAudio
+   calls all succeed, nothing throws, nothing is audible.
+2. **System/device output** — physical mute switch, system volume, or Bluetooth/AirPlay routing
+   silently switched output to a different (silent or absent) device mid-session.
+3. **A specific real device/browser this wasn't tested on** — this investigation covered Chromium
+   (dev + prod build, mouse + touch-emulated). If the user's device is Safari/iOS specifically,
+   that's the one major WebAudio-unlock implementation this investigation did NOT get to test
+   against a real engine (Playwright's WebKit exists but wasn't in this pass) — worth a targeted
+   follow-up if the browser/OS-mute explanations don't pan out.
+**Recommendation:** before further code archaeology, check the browser tab's own mute state and
+the site's sound permission in browser settings on the affected device.
+
+### Regression guard (Step 3, hardening)
+New: `scripts/verify-audio-paths.ts`, run via `npm run verify:audio`. Self-contained — spawns its
+own `vite` dev server on an ephemeral port and tears it down afterward, so it needs no manual
+setup beyond `npx playwright install chromium` once (Playwright + `tsx` are now real
+`devDependencies`, not the ad-hoc `--no-save` installs prior slices used for one-off
+verification — this script is meant to be run repeatedly, so it had to persist).
+Wraps the real `AudioContext` (same technique as the investigation above) and asserts the exact
+oscillator-start count for all 9 requested checkpoints: menu card tap (1), match select (1),
+match wrong (1), match correct (3), full-round celebration (12), sort drag pickup (1), sort
+correct-bin drop (4 — plop + chime together), quiz wrong (1), quiz correct (3). Validated the
+guard has teeth before trusting it: temporarily forced `sfx()` to no-op
+(`if (this.muted || !this.ctx || true) return;`), re-ran the script, confirmed all 9 checkpoints
+failed with clear "expected N, got 0" messages, then reverted (confirmed via `git diff` showing
+zero residual change). Requires `src/main.ts`'s new `window.__game` hook (see below) to read
+exact on-screen positions for precise taps — without it, the script would need to duplicate
+every scene's layout math independently, which would silently drift out of sync with real
+layout changes exactly the way a hardcoded-percentage click coordinate did during this
+investigation's first (failed) diagnostic attempt.
+
+**New permanent (not temporary-then-removed) file map entries:**
+- `src/main.ts` — added a `window.__game` exposure gated behind `if (import.meta.env.DEV)`.
+  Vite statically replaces `import.meta.env.DEV` with `false` in production builds, so this
+  whole block is dead-code-eliminated from `dist/` — confirmed by grepping the built bundle for
+  `__game` (zero matches) after a real `vite build`. Unlike every prior slice's temporary
+  `window.__game`/`console.debug('[TEST] ...')` instrumentation (added for one verification pass,
+  then deleted), this one is meant to stay, because `scripts/verify-audio-paths.ts` now depends
+  on it permanently.
+- `scripts/verify-audio-paths.ts` — new, see above.
+- `package.json` — added `"verify:audio"` script; `playwright` and `tsx` moved from prior
+  slices' ad-hoc `npm install --no-save` (used once per verification pass, then uninstalled) to
+  real, persisted `devDependencies`, since this regression guard needs to be re-runnable by
+  anyone (or CI) without reconstructing tooling each time.
+
+### Verification summary (Step 3, "verify audibly")
+This sandbox has no speaker output, so "audibly" was approximated as rigorously as possible via
+the WebAudio-call-path proxy described above — flagged here explicitly rather than silently
+claimed as a literal listening pass (same "pending a human" caveat prior slices used for SFX
+audible *quality*, e.g. Slice 4/5's synthesized-tone review). Per-hook results, all confirmed
+firing with the correct call shape:
+- Menu → card tap: 1 oscillator (`click`).
+- Matching theme → select: 1 oscillator (`select`); wrong: 1 oscillator (`wrong`); correct: 3
+  oscillators (`correct` chime triad); full round → celebration: 12 oscillators (`celebrate`
+  fanfare, 6 notes × 2 layers).
+- Fruit sort → drag pickup: 1 oscillator (`pickup`); correct-bin drop: 4 oscillators (`plop` +
+  `correct` chime, played together per SortScene's `settleIntoBin`).
+- Both quiz games (counting AND big/small explicitly, not just one) → correct: 3 oscillators;
+  wrong: 1 oscillator — identical call shape in both games, as expected (same
+  `AudioManager.sfx()` call sites in `QuizScene`, game-agnostic).
+**Recommend a real human listening pass** (on the actual device where silence was reported, with
+particular attention to the tab/site mute state per the recommendation above) before considering
+this fully closed — headless WebAudio-call verification proves the code is doing what it should;
+it can't prove a human would hear it on a specific misconfigured device.

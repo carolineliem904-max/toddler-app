@@ -41,6 +41,18 @@ const game = new Phaser.Game({
   scene: [MenuScene, MatchScene, SortScene, QuizScene],
 });
 
+// Dev-only scene-introspection hook (Vite statically strips this whole block
+// from production builds since import.meta.env.DEV is false there — verify
+// with a prod build if ever in doubt, don't just trust the comment).
+// Exists solely so scripts/verify-audio-paths.ts can read exact game-object
+// positions and tap precisely, without needing to duplicate this app's
+// layout math in a separate script (which would silently drift out of sync
+// with real layout changes). See that script + HANDOFF for the audio-bug
+// investigation this was built for.
+if (import.meta.env.DEV) {
+  (window as unknown as { __game: Phaser.Game }).__game = game;
+}
+
 let resizeTimer: number | undefined;
 function handleResize(): void {
   window.clearTimeout(resizeTimer);
