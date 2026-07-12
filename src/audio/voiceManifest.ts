@@ -12,6 +12,9 @@ export type VoiceKey =
   | 'theme_vehicles_intro'
   | 'theme_fruits_intro'
   | 'game_fruitsort_intro'
+  | 'quiz_counting_intro'
+  | 'quiz_big_intro'
+  | 'quiz_small_intro'
   | 'praise_1'
   | 'praise_2'
   | 'praise_3'
@@ -35,6 +38,9 @@ export const VOICE_MANIFEST: Record<VoiceKey, VoiceLine> = {
   theme_vehicles_intro: { file: 'theme_vehicles_intro.mp3', text: 'Ayo cari kendaraannya!' },
   theme_fruits_intro: { file: 'theme_fruits_intro.mp3', text: 'Ayo cari buahnya!' },
   game_fruitsort_intro: { file: 'game_fruitsort_intro.mp3', text: 'Ayo pilah buahnya!' },
+  quiz_counting_intro: { file: 'quiz_counting_intro.mp3', text: 'Ayo hitung! Ada berapa?' },
+  quiz_big_intro: { file: 'quiz_big_intro.mp3', text: 'Mana yang besar?' },
+  quiz_small_intro: { file: 'quiz_small_intro.mp3', text: 'Mana yang kecil?' },
   praise_1: { file: 'praise_1.mp3', text: 'Pintar!' },
   praise_2: { file: 'praise_2.mp3', text: 'Hebat!' },
   praise_3: { file: 'praise_3.mp3', text: 'Yeay!' },

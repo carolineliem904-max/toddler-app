@@ -138,10 +138,23 @@ export class MenuScene extends Phaser.Scene {
         cols = candidateCols;
       }
     }
-    // bestSize already reaches CARD_MIN_PX naturally whenever geometry allows
-    // it (confirmed at up to 8 cards on both tested viewports); this only
-    // clamps the rare case where even the best column choice falls short.
-    const cardSize = Math.max(CARD_SAFETY_FLOOR_PX, bestSize);
+    // bestSize is the true geometric maximum across the candidate column
+    // counts — it must NEVER be forced up past what the viewport can
+    // actually fit. An earlier version of this code did `Math.max(
+    // CARD_SAFETY_FLOOR_PX, bestSize)`, which worked by coincidence through
+    // Slice 5 (bestSize dipped under the floor only at 9 cards, and forcing
+    // it up to exactly 120 still happened to clear the viewport there) but
+    // breaks at Slice 6's 11 cards: forcing a 2-column, 6-row grid up to
+    // 120px cards overflows ~80px past the bottom safe margin. Using
+    // bestSize as-is can never overflow, by construction (it's already the
+    // largest size that fits); CARD_SAFETY_FLOOR_PX becomes a pure
+    // documentation/logging reference instead of an enforced clamp.
+    const cardSize = bestSize;
+    if (cardSize < CARD_SAFETY_FLOOR_PX) {
+      console.info(
+        `[MenuScene] ${count}-card grid at ${Math.round(cssW)}x${Math.round(cssH)} can't reach the ${CARD_SAFETY_FLOOR_PX}px floor (best: ${Math.round(cardSize)}px) — see HANDOFF Slice 6 notes.`,
+      );
+    }
     const rows = Math.ceil(count / cols);
 
     const gridH = rows * cardSize + (rows - 1) * CARD_GAP_PX;
@@ -163,11 +176,12 @@ export class MenuScene extends Phaser.Scene {
   }
 
   // Card art is fully delegated to RENDERERS[theme.renderer] for 'match'
-  // entries — no hardcoded per-theme art lives here. 'sort' entries are the
-  // one necessary branch: they aren't theme/renderer-based at all, so their
-  // card art is just their literal cardEmoji glyph. This is a single,
-  // contained kind-level branch (match vs sort), not a per-theme branch —
-  // it doesn't reintroduce the per-theme branching CLAUDE.md rules out.
+  // entries — no hardcoded per-theme art lives here. 'sort' and 'quiz'
+  // entries aren't theme/renderer-based at all, so their card art is drawn
+  // directly from their own literal data (cardEmoji glyph / menuCard spec).
+  // This is a single, contained kind-level branch (match vs sort vs quiz),
+  // not a per-theme branch — it doesn't reintroduce the per-theme branching
+  // CLAUDE.md rules out.
   private createCard(entry: MenuEntry, x: number, y: number, sizeCss: number, dpr: number, index: number): void {
     const cx = x * dpr;
     const cy = y * dpr;
@@ -196,9 +210,23 @@ export class MenuScene extends Phaser.Scene {
       drawPanel(color);
       const visual = renderer.render({ scene: this, x: 0, y: 0, radius: s * 0.32, role, color, pair });
       container.add(visual.container);
-    } else {
+    } else if (entry.kind === 'sort') {
       drawPanel(entry.game.cardColor);
       container.add(createEmojiText(this, entry.game.cardEmoji, s * 0.5));
+    } else {
+      drawPanel(entry.game.cardColor);
+      const card = entry.game.menuCard;
+      if (card.kind === 'dots') {
+        const g = this.add.graphics();
+        this.drawMenuDotsRow(g, card.count, s);
+        container.add(g);
+      } else {
+        const big = createEmojiText(this, card.emoji, s * 0.42);
+        big.setPosition(-s * 0.16, -s * 0.05);
+        const small = createEmojiText(this, card.emoji, s * 0.42 * card.smallScale);
+        small.setPosition(s * 0.26, s * 0.18);
+        container.add([big, small]);
+      }
     }
 
     container.setSize(s, s);
@@ -212,7 +240,8 @@ export class MenuScene extends Phaser.Scene {
         yoyo: true,
         onComplete: () => {
           if (entry.kind === 'match') this.scene.start('MatchScene', { theme: entry.theme });
-          else this.scene.start('SortScene', { game: entry.game });
+          else if (entry.kind === 'sort') this.scene.start('SortScene', { game: entry.game });
+          else this.scene.start('QuizScene', { game: entry.game });
         },
       });
     });
@@ -267,6 +296,20 @@ export class MenuScene extends Phaser.Scene {
       if (!muted) AudioManager.sfx('click');
     });
     this.muteButton = container;
+  }
+
+  // Counting quiz card icon: three plain dots in a row (spec, literally:
+  // "three dots (⚫⚫⚫ drawn as Graphics)") — deliberately simpler than
+  // QuizScene's in-game dice/domino pip arrangements, since this is just a
+  // menu identity glyph, not a quantity to be read.
+  private drawMenuDotsRow(g: Phaser.GameObjects.Graphics, count: number, size: number): void {
+    const dotR = size * 0.09;
+    const spacing = size * 0.24;
+    const totalW = spacing * (count - 1);
+    g.fillStyle(0x2b2b2b, 0.85);
+    for (let i = 0; i < count; i++) {
+      g.fillCircle(-totalW / 2 + i * spacing, 0, dotR);
+    }
   }
 
   // Simple speaker glyph (body + sound-wave arcs), with a diagonal

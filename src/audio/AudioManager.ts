@@ -95,6 +95,18 @@ class AudioManagerImpl {
     src.start();
   }
 
+  /**
+   * True only if this line's buffer has actually finished loading — false
+   * for missing files, still-loading files (preload race, see HANDOFF), or
+   * before unlock() has run. QuizScene's big/small game uses this to decide
+   * whether to show its no-audio-fallback visual cue: treating "not
+   * confirmed loaded yet" the same as "missing" is the conservative, always-
+   * correct default for a game that's otherwise unplayable-by-guessing.
+   */
+  hasVoice(key: VoiceKey): boolean {
+    return this.voiceBuffers.has(key);
+  }
+
   randomPraiseKey(): VoiceKey {
     return PRAISE_VOICE_KEYS[Math.floor(Math.random() * PRAISE_VOICE_KEYS.length)]!;
   }
