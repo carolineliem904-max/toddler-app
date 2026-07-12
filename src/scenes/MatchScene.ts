@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 import { THEMES, shuffled, sameOrder, type PairDef, type Theme } from '../data/themes';
 import { RENDERERS } from '../rendering/renderers';
 import { darken } from '../utils/color';
+import { AudioManager } from '../audio/AudioManager';
+import { THEME_INTRO_VOICE } from '../audio/voiceManifest';
 
 interface RoundItem {
   pairId: string;
@@ -42,6 +44,11 @@ interface Selection {
 
 interface MatchSceneData {
   theme?: Theme;
+  // Set only by this scene's own handleResize() restart, never by MenuScene.
+  // Distinguishes a resize-driven re-create() (same theme, not a new visit)
+  // from a real menu -> theme entry, so the intro voice line fires once per
+  // *entry* rather than replaying on every resize (see HANDOFF Slice 4 notes).
+  isResize?: boolean;
 }
 
 const EDGE_MARGIN_PX = 60; // CSS px — nothing tappable closer to the screen edge than this
@@ -68,6 +75,7 @@ export class MatchScene extends Phaser.Scene {
   private confettiTextureKey = 'confetti-particle';
   private lastSize = { w: 0, h: 0 };
   private homeButton: Phaser.GameObjects.Container | null = null;
+  private isResizeEntry = false;
 
   // Which side may start (or switch) a selection. Only 'left' is implemented
   // behaviorally — 'either' is a clean insertion point for when real-toddler
@@ -82,6 +90,7 @@ export class MatchScene extends Phaser.Scene {
     // THEMES[0] fallback covers direct scene launches (e.g. during dev) that
     // skip MenuScene and never pass a theme.
     this.theme = data.theme ?? THEMES[0]!;
+    this.isResizeEntry = data.isResize ?? false;
   }
 
   create(): void {
@@ -91,6 +100,12 @@ export class MatchScene extends Phaser.Scene {
     this.scale.on('resize', this.handleResize, this);
     this.events.once('shutdown', () => this.scale.off('resize', this.handleResize, this));
     this.createHomeButton();
+    // Once per theme *entry* (menu -> theme), not on every resize-restart of
+    // the same theme and not per round (startRound() re-fires on every loop).
+    if (!this.isResizeEntry) {
+      const introKey = THEME_INTRO_VOICE[this.theme.id];
+      if (introKey) AudioManager.voice(introKey);
+    }
     this.startRound();
   }
 
@@ -108,10 +123,11 @@ export class MatchScene extends Phaser.Scene {
     // size change; only restart (and reshuffle) when the size truly changed.
     if (w === this.lastSize.w && h === this.lastSize.h) return;
     this.lastSize = { w, h };
-    this.scene.restart({ theme: this.theme });
+    this.scene.restart({ theme: this.theme, isResize: true });
   }
 
   private goHome(): void {
+    AudioManager.sfx('click');
     this.scene.start('MenuScene');
   }
 
@@ -283,6 +299,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private select(item: RoundItem): void {
+    AudioManager.sfx('select');
     item.container.setScale(1.12);
     this.tweens.add({
       targets: item.container,
@@ -300,6 +317,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private handleWrongMatch(item: RoundItem): void {
+    AudioManager.sfx('wrong');
     const baseX = item.container.x;
     this.tweens.add({
       targets: item.container,
@@ -315,6 +333,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private handleCorrectMatch(left: RoundItem, right: RoundItem): void {
+    AudioManager.sfx('correct');
     left.matched = true;
     right.matched = true;
     left.container.disableInteractive();
@@ -403,6 +422,8 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private celebrate(): void {
+    AudioManager.sfx('celebrate');
+    AudioManager.voice(AudioManager.randomPraiseKey());
     // Home button is deliberately unreachable mid-celebration.
     this.homeButton?.disableInteractive();
 

@@ -148,13 +148,40 @@ function paintIcon(g: Phaser.GameObjects.Graphics, kind: IconKind, radius: numbe
       break;
     }
     case 'nest': {
+      // Wider + shallower than the bowl's semicircle (bowl: r=0.85, full
+      // half-circle depth), plus twiggy strokes poking above the rim, so the
+      // two "destination" silhouettes read as distinct at a glance rather
+      // than as twin semicircles (Slice 4 HANDOFF Part A2 — a real
+      // toddler-difficulty issue, not just a style tweak).
+      const rx = radius * 0.95;
+      const ry = radius * 0.5;
+      const rimY = -radius * 0.05;
+      const pts: number[] = [];
+      const steps = 20;
+      for (let i = 0; i <= steps; i++) {
+        const t = Math.PI * (i / steps);
+        pts.push(Math.cos(t) * rx, rimY + Math.sin(t) * ry);
+      }
       g.beginPath();
-      g.slice(0, -radius * 0.05, radius * 0.85, 0, Math.PI, false);
+      g.moveTo(pts[0] ?? 0, pts[1] ?? 0);
+      for (let i = 2; i < pts.length; i += 2) g.lineTo(pts[i] ?? 0, pts[i + 1] ?? 0);
+      g.closePath();
       g.fillPath();
       g.strokePath();
+
+      // Rough/twiggy rim: short brown strokes poking up above the rim line.
+      g.lineStyle(Math.max(2, stroke * 1.2), 0x5c3d20, 0.8);
+      for (let i = -3; i <= 3; i++) {
+        if (i === 0) continue;
+        const bx = i * rx * 0.24;
+        const tipX = bx + (i % 2 === 0 ? -radius * 0.06 : radius * 0.06);
+        g.lineBetween(bx, rimY, tipX, rimY - radius * 0.22);
+      }
+
+      // Woven texture inside the bowl of the nest.
       g.lineStyle(Math.max(2, stroke), 0x5c3d20, 0.5);
       for (let i = -2; i <= 2; i++) {
-        g.lineBetween(i * radius * 0.3, radius * 0.15, i * radius * 0.3 + radius * 0.15, 0);
+        g.lineBetween(i * rx * 0.28, ry * 0.55, i * rx * 0.28 + rx * 0.14, rimY + ry * 0.1);
       }
       break;
     }
