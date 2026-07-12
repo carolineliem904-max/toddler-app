@@ -41,19 +41,6 @@ const CORRECT_ADVANCE_DELAY_MS = 1200;
 // this counter (see handleWrong).
 const CELEBRATE_EVERY_N = 5;
 
-// Dice/domino pip layouts (relative unit coords, unit = card half-size) for
-// counts 1-5 — the answer cards' dot clusters, deliberately structured
-// (unlike the prompt's loose organic scatter, see clusterPositions) since
-// these are meant to read as a recognizable dot-pattern symbol, the same way
-// real dice pips do.
-const DICE_DOT_LAYOUTS: Record<number, [number, number][]> = {
-  1: [[0, 0]],
-  2: [[-0.4, -0.4], [0.4, 0.4]],
-  3: [[-0.4, -0.4], [0, 0], [0.4, 0.4]],
-  4: [[-0.4, -0.4], [0.4, -0.4], [-0.4, 0.4], [0.4, 0.4]],
-  5: [[-0.4, -0.4], [0.4, -0.4], [0, 0], [-0.4, 0.4], [0.4, 0.4]],
-};
-
 // Big/small no-audio fallback cue: a dashed circle sized like the target.
 // Reuses quizGames' BIG_SCALE/SMALL_SCALE (2.4:1) so the cue agrees with the
 // actual answer-card size ratio rather than an independently-chosen number.
@@ -194,13 +181,10 @@ export class QuizScene extends Phaser.Scene {
     }
   }
 
-  // N of the same emoji in a loose, organic cluster — deliberately NOT a
-  // grid/line (spec: "arranged in a loose cluster... counting scattered
-  // objects is the actual skill"). Disk-sampling with bounded min-spacing
-  // retries; count is always <=5 in a generously-sized zone here, unlike
-  // SortScene's 6-item/small-drag-area case that actually failed to find
-  // clear spots (HANDOFF Slice 5) — the retry budget comfortably succeeds at
-  // this scale, with a graceful ignore-spacing fallback if it somehow didn't.
+  // N of the same emoji in a tidy, compact loose grid — countable at a
+  // glance (toddler QA feedback: the original wide organic scatter read as
+  // too spread out to count reliably; "loose grid is fine, no wide
+  // scatter"). See clusterGridPositions for the layout itself.
   private renderEmojiClusterPrompt(
     container: Phaser.GameObjects.Container,
     prompt: Extract<PromptSpec, { kind: 'emojiCluster' }>,
@@ -208,8 +192,7 @@ export class QuizScene extends Phaser.Scene {
   ): void {
     const minDim = Math.min(zone.w, zone.h);
     const itemRadius = Phaser.Math.Clamp(minDim * 0.16, 40, 70);
-    const clusterMaxRadius = Math.max(0, minDim * 0.5 - itemRadius);
-    const positions = this.clusterPositions(prompt.count, clusterMaxRadius, itemRadius * 2.2);
+    const positions = this.clusterGridPositions(prompt.count, itemRadius);
     positions.forEach((p) => {
       const text = createEmojiText(this, prompt.emoji, this.px(itemRadius) * 1.7);
       text.setPosition(this.px(p.x), this.px(p.y));
@@ -217,45 +200,33 @@ export class QuizScene extends Phaser.Scene {
     });
   }
 
-  // Real bug, caught by screenshot review rather than any assertion (same
-  // class of miss as SortScene's original scatter bug, HANDOFF Slice 5): a
-  // fixed minSpacing can exceed what the cluster disk can actually fit for
-  // 4-5 items at phone width (e.g. minSpacing ~88px vs an ~85px disk
-  // radius), and a single-pass "give up and place anyway" fallback then
-  // silently produces overlapping, unreadable emoji — invisible to the
-  // property checks (which only assert on the *data*, not pixel layout).
-  // Fixed with adaptive relaxation: each point gets its own bounded-attempt
-  // passes, and only shrinks the required spacing (by 15% per exhausted
-  // pass) rather than dropping straight to zero, so items stay maximally
-  // spread for the count/area actually available and only pack tighter when
-  // genuinely necessary — never a random unspaced drop.
-  private clusterPositions(count: number, maxRadius: number, minSpacing: number): { x: number; y: number }[] {
-    const points: { x: number; y: number }[] = [];
-    const attemptsPerPass = 150;
-    for (let i = 0; i < count; i++) {
-      let spacing = minSpacing;
-      let placed: { x: number; y: number } | null = null;
-      while (!placed) {
-        for (let attempt = 0; attempt < attemptsPerPass && !placed; attempt++) {
-          const candidate = this.sampleDiskPoint(maxRadius);
-          if (points.every((p) => Phaser.Math.Distance.Between(p.x, p.y, candidate.x, candidate.y) >= spacing)) {
-            placed = candidate;
-          }
-        }
-        if (!placed) {
-          if (spacing < 1) placed = this.sampleDiskPoint(maxRadius); // degenerate area only
-          else spacing *= 0.85;
-        }
-      }
-      points.push(placed);
-    }
-    return points;
-  }
+  // Roughly square grid sized to the item count (1->1x1, 2->2x1, 3-4->2x2,
+  // 5->3x2), each row individually centered (same row-centering idea as
+  // MenuScene/SortScene's grids). Small per-item jitter (12% of cell) keeps
+  // it from looking robotically aligned while staying compact — a "loose
+  // grid," not a wide scatter. Cell spacing is fixed (2.3x item radius), so
+  // non-overlap is guaranteed by construction — this also sidesteps the
+  // packing-feasibility bug the earlier organic disk-scatter had (HANDOFF:
+  // a fixed min-spacing could exceed the available disk radius for 4-5
+  // items; a grid with fixed cell spacing has no such failure mode).
+  private clusterGridPositions(count: number, itemRadius: number): { x: number; y: number }[] {
+    const cols = Math.max(1, Math.ceil(Math.sqrt(count)));
+    const rows = Math.ceil(count / cols);
+    const cellSize = itemRadius * 2.3;
+    const jitter = cellSize * 0.12;
+    const gridH = rows * cellSize;
 
-  private sampleDiskPoint(maxRadius: number): { x: number; y: number } {
-    const angle = Math.random() * Math.PI * 2;
-    const r = Math.sqrt(Math.random()) * maxRadius;
-    return { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+    const positions: { x: number; y: number }[] = [];
+    for (let i = 0; i < count; i++) {
+      const row = Math.floor(i / cols);
+      const col = i - row * cols;
+      const itemsInRow = Math.min(cols, count - row * cols);
+      const rowW = itemsInRow * cellSize;
+      const x = -rowW / 2 + cellSize * (col + 0.5) + Phaser.Math.Between(-jitter, jitter);
+      const y = -gridH / 2 + cellSize * (row + 0.5) + Phaser.Math.Between(-jitter, jitter);
+      positions.push({ x, y });
+    }
+    return positions;
   }
 
   // Big/small's prompt zone is EMPTY except a soft ambient glow (spec: "this
@@ -385,7 +356,10 @@ export class QuizScene extends Phaser.Scene {
     container.add(panel);
 
     if (answer.kind === 'dots') {
-      this.drawDotCluster(container, answer.count, s);
+      const digit = this.createDigitText(answer.count, s * 0.46);
+      digit.setPosition(0, -s * 0.15);
+      container.add(digit);
+      this.drawDotRow(container, answer.count, s);
     } else {
       const text = createEmojiText(this, answer.emoji, s * 0.62 * answer.scaleFactor);
       container.add(text);
@@ -401,13 +375,40 @@ export class QuizScene extends Phaser.Scene {
     this.tweens.add({ targets: container, scale: 1, duration: 300, delay: index * 60, ease: 'Back.easeOut' });
   }
 
-  private drawDotCluster(container: Phaser.GameObjects.Container, count: number, cardSize: number): void {
-    const layout = DICE_DOT_LAYOUTS[count] ?? DICE_DOT_LAYOUTS[1]!;
-    const dotR = cardSize * 0.11;
-    const spread = cardSize * 0.32;
+  // Toddler QA feedback (post-Slice-6): dot-only answers were harder to read
+  // at a glance than expected, and testers responded well once a numeral was
+  // added alongside the dots. Combined digit+dots is now the 2-3yo answer
+  // display; a digit-only mode remains the (still unbuilt) future 3-4yo
+  // difficulty step, same unimplemented-seed pattern as
+  // SHAPE_CROSS_COLOR_MODE. No custom font file — just the browser's default
+  // system sans-serif stack, kept huge and high-contrast.
+  private createDigitText(n: number, fontSizePx: number): Phaser.GameObjects.Text {
+    const dpr = window.devicePixelRatio || 1;
+    const text = this.add.text(0, 0, String(n), {
+      fontSize: `${Math.round(fontSizePx)}px`,
+      fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+      fontStyle: 'bold',
+      color: '#2b2b2b',
+    });
+    text.setOrigin(0.5);
+    text.setResolution(dpr);
+    return text;
+  }
+
+  // A single neat, evenly-spaced row of dots beneath the digit — deliberately
+  // tidy/regular (no jitter, no 2D dice-pip layout), per toddler QA: the dots
+  // now reinforce the digit rather than needing to stand alone as a
+  // recognizable pip pattern.
+  private drawDotRow(container: Phaser.GameObjects.Container, count: number, cardSize: number): void {
+    const dotR = cardSize * 0.055;
+    const spacing = cardSize * 0.16;
+    const totalW = spacing * (count - 1);
+    const y = cardSize * 0.3;
     const g = this.add.graphics();
     g.fillStyle(0x2b2b2b, 0.85);
-    layout.forEach(([ux, uy]) => g.fillCircle(ux * spread, uy * spread, dotR));
+    for (let i = 0; i < count; i++) {
+      g.fillCircle(-totalW / 2 + i * spacing, y, dotR);
+    }
     container.add(g);
   }
 

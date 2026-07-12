@@ -36,11 +36,20 @@ This slice: the tap-the-answer engine (QuizScene) + two games: counting 1–5 an
 ### Game 1: Counting 1–5 (`counting`)
 - Prompt: N of the same emoji (N random 1–5), arranged in a loose cluster (not a straight
   line — counting scattered objects is the actual skill). Emoji drawn from a small pool
-  (🍎🐤🐟🌸⚽) — one kind per round.
-- Answers: 3 cards showing DOT CLUSTERS (filled circles in dice/domino arrangements), not
-  digits. Correct card = N dots; distractors = N±1 (clamped to 1–5, never duplicate counts).
+  (🍎🐤🐟🌸⚽) — one kind per round. **Amended post-launch after real-toddler QA:** the
+  original wide organic disk-scatter read as too spread out to count reliably; tightened to a
+  compact "loose grid" — still not a rigid straight line, but a tidy, countable-at-a-glance
+  group (see decisions below).
+- Answers: 3 cards. Correct card = N; distractors = N±1 (clamped to 1–5, never duplicate
+  counts). **Amended post-launch after real-toddler QA:** the original design was dot-only
+  (no digits); testers found dot-only harder to read at a glance than expected, so answer
+  cards now show a large digit PLUS a tidy single-row dot count beneath it (see Slice 6
+  status/decisions below for the combined design and the updated dots-vs-digits rationale).
 - Rationale (document in HANDOFF): subitizing (instant quantity recognition) precedes numeral
-  literacy; digits become the 3–4 difficulty mode later, same pattern as SHAPE_CROSS_COLOR_MODE.
+  literacy, which is why dots stay part of the display — but real toddler QA showed a bare
+  digit alongside the dots reads faster than dots alone for this age band, so **combined
+  digit+dots is now the 2–3yo mode**; a digit-ONLY mode (no dots at all) remains the future
+  3–4yo difficulty step, same pattern as SHAPE_CROSS_COLOR_MODE.
 - Voice: `quiz_counting_intro` ("Ayo hitung! Ada berapa?") at round start.
 - Menu card: 🔢? No — no digits on the toddler surface. Use three dots (⚫⚫⚫ drawn as
   Graphics) on the card. Document in CARD assignments.
@@ -137,6 +146,32 @@ column counts) with no forced-up clamp, so the grid can never overflow by constr
 visible without being an enforced (and overflow-risking) constraint. See decisions below for the
 concrete resulting numbers.
 
+**Post-launch update: real-toddler QA on the shipped counting game drove two further
+adjustments**, both landed together, `tsc` clean, re-verified with a fresh headless-Playwright
+pass at both viewports (menu → 7 counting rounds with pre-existing wrong-tap/dimming/
+celebration checks all still passing → home → both big/small audio states unchanged/re-confirmed
+→ full 8-theme + fruit-sort regression), zero console errors, plus a targeted screenshot script
+forcing and capturing count=1 and count=5 rounds at both viewports specifically (the range
+extremes) to confirm the new visuals by eye. Same temporary-instrumentation-then-remove
+discipline as before (`window.__game` only this round — no `console.debug('[TEST] ...')` calls
+were needed since the existing scripts already read scene state directly); confirmed absent via
+`grep -rn "\[TEST\]\|__game" src/` and a clean `tsc` re-run.
+1. **Answer cards: digit + dots, not dots-only.** Testers found dot-only harder to read at a
+   glance than expected. Cards now show a large bold numeral (`createDigitText`, system
+   sans-serif font stack, no font file) with a tidy single-row of dots beneath it
+   (`drawDotRow`) — replacing the old 2D dice/domino pip layout (`DICE_DOT_LAYOUTS`,
+   `drawDotCluster`) entirely, since the dots no longer need to stand alone as a recognizable
+   pip pattern once a digit is doing the primary identification work.
+2. **Prompt cluster: tidy loose grid, not wide organic scatter.** Testers found the prompt's
+   disk-scattered emoji read as too spread out to reliably count. Replaced
+   `clusterPositions`/`sampleDiskPoint` (organic disk-sampling with adaptive spacing
+   relaxation — the fix for last round's overlap bug) with `clusterGridPositions`: a compact,
+   roughly-square grid sized to the item count, small per-item jitter so it doesn't look
+   robotically aligned. This is a strictly simpler and more robust replacement, not a
+   patch on top of the old approach — grid cell spacing is fixed by construction, so the
+   entire packing-feasibility bug class from last round (fixed spacing exceeding the
+   available placement area) cannot recur here the way it could with disk-sampling.
+
 ### File map
 - `src/data/quizGames.ts` — new. `PromptSpec` (`emojiCluster` | `sizeCue`), `AnswerSpec`
   (`dots` | `emojiScale`), `QuizRound`, `QuizMenuCard` (`dots` | `emojiPair`), `QuizGame`.
@@ -147,13 +182,15 @@ concrete resulting numbers.
   Zero Phaser/DOM dependency, matching every other file under `src/data/`.
 - `src/scenes/QuizScene.ts` — new. `startRound()` (clear board, generate round, layout prompt
   zone + answer zone, play `introVoice`), `createPromptVisual()` branching on `prompt.kind`
-  (`renderEmojiClusterPrompt` / `renderSizeCuePrompt`), `clusterPositions()` (adaptive-spacing
-  disk scatter, see the bug note above), `computeAnswerLayout()` (adaptive column-count grid for
-  2–3 answer cards, never forcing beyond what fits — see decisions), `drawDotCluster()`
-  (dice/domino pip layouts for counts 1–5), `handleCorrect()`/`handleWrong()`/`celebrate()`.
-  Home button and confetti helpers are verbatim copies of MatchScene/SortScene's (same
-  destroy-before-recreate discipline; no shared base class, same duplication-over-abstraction
-  precedent as Slice 5).
+  (`renderEmojiClusterPrompt` / `renderSizeCuePrompt`), `clusterGridPositions()` (tidy compact
+  grid for the prompt's N-emoji cluster — post-launch replacement for the original organic
+  disk-scatter, see the QA-adjustments note above), `computeAnswerLayout()` (adaptive
+  column-count grid for 2–3 answer cards, never forcing beyond what fits — see decisions),
+  `createDigitText()` + `drawDotRow()` (the combined digit+dots answer display — post-launch
+  replacement for the original dots-only `drawDotCluster()`/`DICE_DOT_LAYOUTS`),
+  `handleCorrect()`/`handleWrong()`/`celebrate()`. Home button and confetti helpers are verbatim
+  copies of MatchScene/SortScene's (same destroy-before-recreate discipline; no shared base
+  class, same duplication-over-abstraction precedent as Slice 5).
 - `src/data/menuEntries.ts` — `MenuEntry` gained a third variant, `{ kind: 'quiz'; id; game:
   QuizGame }`; `MENU_ENTRIES` now appends `QUIZ_GAMES` after `SORT_GAMES` (11 entries total: 8
   match + 1 sort + 2 quiz).
@@ -203,13 +240,19 @@ concrete resulting numbers.
   `n=1` → `{2,3}`) rather than shipping with only one valid distractor. Exhaustively verified
   for all of 1–5 in the headless property-check script, plus spot-checks against the literal
   spec wording for the interior values.
-- **Dot rendering has two deliberately different visual languages.** Answer cards use fixed
-  dice/domino pip layouts (`DICE_DOT_LAYOUTS`, positions 1–5) — structured, recognizable-as-a-
-  symbol, matching the spec's literal "dice/domino arrangements" wording. The prompt's emoji
-  cluster is the opposite: organic/scattered, explicitly NOT gridlike (spec: "not a straight
-  line — counting scattered objects is the actual skill"). These aren't reconciled into one
-  system on purpose — a real object cluster and an abstract dice symbol are different things
-  toddlers are learning to read differently.
+- **Dot rendering originally used two deliberately different visual languages; superseded
+  post-launch by real-toddler QA (see the QA-adjustments note above).** The original design:
+  answer cards used fixed dice/domino pip layouts (`DICE_DOT_LAYOUTS`, positions 1–5) —
+  structured, recognizable-as-a-symbol — while the prompt's emoji cluster was organic/scattered,
+  explicitly not gridlike. Testers found both choices worked against legibility for this age
+  band (dot-only answers read slower than digit+dots; the scattered prompt read as too spread
+  out to count), so both were changed: answer cards now combine a digit with a plain single-row
+  dot count (`createDigitText` + `drawDotRow`), and the prompt uses a tidy compact grid
+  (`clusterGridPositions`) instead of organic scatter. The one distinction that's still
+  intentional and unchanged: the prompt (real objects to count) and the answers (an abstract
+  quantity symbol) remain visually distinct from each other — a row of dots under a big digit
+  reads differently from N loose emoji, which is the point — they just don't each also carry an
+  *internal* structured-vs-organic distinction anymore.
 - **`hasVoice()` treats "not confirmed loaded" as "missing."** Covers three states identically
   (muted, still-preloading — the Slice 4 "voice preload race," still unaddressed — and truly
   absent files) by design: for a game that's otherwise unplayable by guessing, showing the
