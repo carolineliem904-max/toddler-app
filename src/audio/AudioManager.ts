@@ -1,6 +1,6 @@
 import { VOICE_MANIFEST, VOICE_DIR, PRAISE_VOICE_KEYS, type VoiceKey } from './voiceManifest';
 
-export type SfxKey = 'select' | 'wrong' | 'correct' | 'celebrate' | 'click';
+export type SfxKey = 'select' | 'wrong' | 'correct' | 'celebrate' | 'click' | 'pickup' | 'plop';
 
 interface ToneOpts {
   type?: OscillatorType;
@@ -72,6 +72,12 @@ class AudioManagerImpl {
         break;
       case 'click':
         this.playClick();
+        break;
+      case 'pickup':
+        this.playPickup();
+        break;
+      case 'plop':
+        this.playPlop();
         break;
     }
   }
@@ -177,6 +183,20 @@ class AudioManagerImpl {
   private playChime(): void {
     const notes = [523.25, 659.25, 783.99];
     notes.forEach((f, i) => this.playTone(f, i * 0.07, 0.18, { type: 'triangle', peak: 0.22 }));
+  }
+
+  // SortScene drag pickup: soft, short pop — pitched lower/shorter than
+  // `select`'s pop so the two stay distinguishable by ear. ~100ms.
+  private playPickup(): void {
+    this.playTone(650, 0, 0.1, { type: 'sine', sweepTo: 500, peak: 0.2 });
+  }
+
+  // SortScene correct-bin drop: a quick downward "plop" contour — the
+  // opposite direction from `wrong`'s upward "hm?" sweep and distinct from
+  // `correct`'s ascending triad, so all three read as different events.
+  // Plays alongside sfx('correct') on a successful drop, not instead of it.
+  private playPlop(): void {
+    this.playTone(500, 0, 0.15, { type: 'sine', sweepTo: 220, peak: 0.22 });
   }
 
   // Celebration: sparkly ascending run + a quiet octave-up shimmer layer.

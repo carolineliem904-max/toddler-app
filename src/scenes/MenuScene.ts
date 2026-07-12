@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
-import { THEMES, type PairDef, type Theme } from '../data/themes';
+import { type PairDef, type Theme } from '../data/themes';
+import { MENU_ENTRIES, type MenuEntry } from '../data/menuEntries';
 import { RENDERERS } from '../rendering/renderers';
+import { createEmojiText } from '../rendering/emojiText';
 import { lighten, darken } from '../utils/color';
 import { PALETTE } from '../data/palette';
 import { AudioManager } from '../audio/AudioManager';
@@ -12,9 +14,16 @@ const BACKGROUND_COLOR = 0xfff8ee;
 // cards at 390px phone width. See HANDOFF decisions.
 const MENU_EDGE_MARGIN_PX = 24;
 const CARD_GAP_PX = 12;
-const CARD_MIN_PX = 160;
+// 160px was the original per-card target (still what computeGrid() reaches
+// whenever geometry allows — confirmed at up to 8 cards on both tested
+// viewports). CARD_SAFETY_FLOOR_PX is the true, never-violated floor:
+// CLAUDE.md's 120px touch-target minimum. Slice 5's 9th card (8 themes + 1
+// sort game) doesn't fit 160px cards in 2 columns on a 390x844 phone without
+// either scrolling (unsupported) or shrinking below 160 — see computeGrid()'s
+// adaptive column choice and HANDOFF Slice 5 decisions for the full math.
+const CARD_SAFETY_FLOOR_PX = 120;
 const CARD_MAX_PX = 240;
-const COLS = 2;
+const GRID_COLUMN_CANDIDATES = [2, 3];
 const MUTE_BUTTON_SIZE_PX = 80; // same size discipline as MatchScene's home button
 // Reserves top clearance for the mute button, same fix as MatchScene's
 // TOP_MARGIN_PX (HANDOFF Slice 3): a fixed-size corner button and a
@@ -38,16 +47,27 @@ const TOP_CLEARANCE_PX = MENU_EDGE_MARGIN_PX + MUTE_BUTTON_SIZE_PX + 16;
 //
 // Slice 4 differentiation pass (HANDOFF Part A1): chosen so no two cards
 // share a dominant color AND no two cards share a silhouette, EXCEPT shapes
-// (blue star) vs shadows (grey star) which intentionally keep the same
+// (star) vs shadows (grey star) which intentionally keep the same
 // star silhouette — shadows' grey fill + grey-tinted panel reads as "shadow"
 // specifically because it's colorless, an intentional contrast with shapes'
-// solid blue star, not an oversight.
+// solid-color star, not an oversight.
+// Slice 5 Part A/B: shapes card recolored blue -> yellow (was colliding with
+// destinations' blue bowl); animals/vehicles/fruits added. Fruits uses grapes
+// (purple), not the spec's suggested banana, because banana-yellow collides
+// with the now-yellow shapes star — the spec's own documented fallback.
+// Remaining accepted collision: vehicles' car and colors' circle are both
+// red (different exact shades: 0xe0483c vs 0xff3b30) — same category of
+// exception as Slice 4's shapes/destinations blue overlap (non-adjacent grid
+// cells, completely different silhouettes). Full matrix in HANDOFF.
 const CARD_ICON_OVERRIDE: Partial<Record<string, { pairId?: string; role: 'left' | 'right'; color?: number }>> = {
   colors: { pairId: 'red', role: 'left' },
-  shapes: { pairId: 'star', role: 'left', color: PALETTE.blue },
+  shapes: { pairId: 'star', role: 'left', color: PALETTE.yellow },
   shadows: { pairId: 'star', role: 'right' },
   objects: { pairId: 'fish', role: 'left' },
   destinations: { role: 'right' },
+  animals: { pairId: 'dog', role: 'left' },
+  vehicles: { pairId: 'car', role: 'left' },
+  fruits: { pairId: 'grapes', role: 'left' },
 };
 
 function pickCardPair(theme: Theme): { pair: PairDef; role: 'left' | 'right'; color?: number } {
@@ -72,12 +92,12 @@ export class MenuScene extends Phaser.Scene {
     this.events.once('shutdown', () => this.scale.off('resize', this.handleResize, this));
 
     const dpr = window.devicePixelRatio || 1;
-    const { positions, cardSize } = this.computeGrid(THEMES.length);
+    const { positions, cardSize } = this.computeGrid(MENU_ENTRIES.length);
 
-    THEMES.forEach((theme, i) => {
+    MENU_ENTRIES.forEach((entry, i) => {
       const pos = positions[i];
       if (!pos) return;
-      this.createCard(theme, pos.x, pos.y, cardSize, dpr, i);
+      this.createCard(entry, pos.x, pos.y, cardSize, dpr, i);
     });
 
     this.createMuteButton();
@@ -92,26 +112,46 @@ export class MenuScene extends Phaser.Scene {
     this.scene.restart();
   }
 
+  // Tries each candidate column count and keeps whichever yields the larger
+  // resulting card size for the current viewport + entry count (this is the
+  // spec's "3-col on tablet if needed" — expressed as "pick whichever fits
+  // best" rather than a hardcoded width breakpoint, so it keeps working as
+  // entries are added later). See HANDOFF Slice 5 decisions for the concrete
+  // numbers at both tested viewports.
   private computeGrid(count: number): { positions: { x: number; y: number }[]; cardSize: number } {
     const dpr = window.devicePixelRatio || 1;
     const cssW = this.scale.width / dpr;
     const cssH = this.scale.height / dpr;
-    const rows = Math.ceil(count / COLS);
 
     const usableW = cssW - MENU_EDGE_MARGIN_PX * 2;
     const usableH = cssH - TOP_CLEARANCE_PX - MENU_EDGE_MARGIN_PX;
-    const cellW = (usableW - CARD_GAP_PX * (COLS - 1)) / COLS;
-    const cellH = (usableH - CARD_GAP_PX * (rows - 1)) / rows;
-    const cardSize = Math.max(CARD_MIN_PX, Math.min(cellW, cellH, CARD_MAX_PX));
+
+    let cols = GRID_COLUMN_CANDIDATES[0]!;
+    let bestSize = 0;
+    for (const candidateCols of GRID_COLUMN_CANDIDATES) {
+      const rows = Math.ceil(count / candidateCols);
+      const cellW = (usableW - CARD_GAP_PX * (candidateCols - 1)) / candidateCols;
+      const cellH = (usableH - CARD_GAP_PX * (rows - 1)) / rows;
+      const size = Math.min(cellW, cellH, CARD_MAX_PX);
+      if (size > bestSize) {
+        bestSize = size;
+        cols = candidateCols;
+      }
+    }
+    // bestSize already reaches CARD_MIN_PX naturally whenever geometry allows
+    // it (confirmed at up to 8 cards on both tested viewports); this only
+    // clamps the rare case where even the best column choice falls short.
+    const cardSize = Math.max(CARD_SAFETY_FLOOR_PX, bestSize);
+    const rows = Math.ceil(count / cols);
 
     const gridH = rows * cardSize + (rows - 1) * CARD_GAP_PX;
     const gridTop = TOP_CLEARANCE_PX + Math.max(0, (usableH - gridH) / 2);
 
     const positions: { x: number; y: number }[] = [];
     for (let i = 0; i < count; i++) {
-      const row = Math.floor(i / COLS);
-      const col = i - row * COLS;
-      const itemsInRow = Math.min(COLS, count - row * COLS);
+      const row = Math.floor(i / cols);
+      const col = i - row * cols;
+      const itemsInRow = Math.min(cols, count - row * cols);
       const rowWidth = itemsInRow * cardSize + (itemsInRow - 1) * CARD_GAP_PX;
       const rowLeft = (cssW - rowWidth) / 2;
       const x = rowLeft + col * (cardSize + CARD_GAP_PX) + cardSize / 2;
@@ -122,33 +162,44 @@ export class MenuScene extends Phaser.Scene {
     return { positions, cardSize };
   }
 
-  // Card art is fully delegated to RENDERERS[theme.renderer] — no hardcoded
-  // per-theme art lives here, only the panel chrome and grid/tap plumbing.
-  private createCard(theme: Theme, x: number, y: number, sizeCss: number, dpr: number, index: number): void {
+  // Card art is fully delegated to RENDERERS[theme.renderer] for 'match'
+  // entries — no hardcoded per-theme art lives here. 'sort' entries are the
+  // one necessary branch: they aren't theme/renderer-based at all, so their
+  // card art is just their literal cardEmoji glyph. This is a single,
+  // contained kind-level branch (match vs sort), not a per-theme branch —
+  // it doesn't reintroduce the per-theme branching CLAUDE.md rules out.
+  private createCard(entry: MenuEntry, x: number, y: number, sizeCss: number, dpr: number, index: number): void {
     const cx = x * dpr;
     const cy = y * dpr;
     const s = sizeCss * dpr;
 
     const container = this.add.container(cx, cy);
-
-    const { pair, role, color: pinnedColor } = pickCardPair(theme);
-    const renderer = RENDERERS[theme.renderer];
-    const { leftColor, rightColor } = renderer.resolveInstance(pair);
-    // A pinned override color (needed for renderers like `shape` whose
-    // resolveInstance() is randomized) takes priority over the resolved one,
-    // so the card's color is stable across reloads/resizes.
-    const color = pinnedColor ?? (role === 'left' ? leftColor : rightColor);
-
     const half = s / 2;
-    const panel = this.add.graphics();
-    panel.fillStyle(lighten(color, 0.82), 1);
-    panel.fillRoundedRect(-half, -half, s, s, s * 0.16);
-    panel.lineStyle(Math.max(2, s * 0.02), darken(color, 0.1), 0.25);
-    panel.strokeRoundedRect(-half, -half, s, s, s * 0.16);
-    container.add(panel);
 
-    const visual = renderer.render({ scene: this, x: 0, y: 0, radius: s * 0.32, role, color, pair });
-    container.add(visual.container);
+    const drawPanel = (color: number) => {
+      const panel = this.add.graphics();
+      panel.fillStyle(lighten(color, 0.82), 1);
+      panel.fillRoundedRect(-half, -half, s, s, s * 0.16);
+      panel.lineStyle(Math.max(2, s * 0.02), darken(color, 0.1), 0.25);
+      panel.strokeRoundedRect(-half, -half, s, s, s * 0.16);
+      container.add(panel);
+    };
+
+    if (entry.kind === 'match') {
+      const { pair, role, color: pinnedColor } = pickCardPair(entry.theme);
+      const renderer = RENDERERS[entry.theme.renderer];
+      const { leftColor, rightColor } = renderer.resolveInstance(pair);
+      // A pinned override color (needed for renderers like `shape` whose
+      // resolveInstance() is randomized) takes priority over the resolved
+      // one, so the card's color is stable across reloads/resizes.
+      const color = pinnedColor ?? (role === 'left' ? leftColor : rightColor);
+      drawPanel(color);
+      const visual = renderer.render({ scene: this, x: 0, y: 0, radius: s * 0.32, role, color, pair });
+      container.add(visual.container);
+    } else {
+      drawPanel(entry.game.cardColor);
+      container.add(createEmojiText(this, entry.game.cardEmoji, s * 0.5));
+    }
 
     container.setSize(s, s);
     container.setInteractive();
@@ -159,7 +210,10 @@ export class MenuScene extends Phaser.Scene {
         scale: 0.92,
         duration: 90,
         yoyo: true,
-        onComplete: () => this.scene.start('MatchScene', { theme }),
+        onComplete: () => {
+          if (entry.kind === 'match') this.scene.start('MatchScene', { theme: entry.theme });
+          else this.scene.start('SortScene', { game: entry.game });
+        },
       });
     });
 

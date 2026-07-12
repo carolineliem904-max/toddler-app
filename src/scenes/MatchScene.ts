@@ -300,6 +300,10 @@ export class MatchScene extends Phaser.Scene {
 
   private select(item: RoundItem): void {
     AudioManager.sfx('select');
+    // Left-side emoji items carry their own looping "breathing" idle tween
+    // (renderers.ts) that also targets `scale` — without killing it first,
+    // both tweens would fight over the same property every frame.
+    this.tweens.killTweensOf(item.container);
     item.container.setScale(1.12);
     this.tweens.add({
       targets: item.container,

@@ -3,6 +3,7 @@ import type { PairDef, RendererKind, ShapeKind } from '../data/themes';
 import { PALETTE_LIST, SHADOW_GREY } from '../data/palette';
 import { desaturate } from '../utils/color';
 import { drawIcon, ICON_COLORS } from './icons';
+import { createEmojiText } from './emojiText';
 import type { ShapeHandle } from './shapeHandle';
 
 export interface ItemVisual {
@@ -230,4 +231,40 @@ const destination: RendererDef = {
   },
 };
 
-export const RENDERERS: Record<RendererKind, RendererDef> = { colorBlob, shape, shadow, object, destination };
+const emoji: RendererDef = {
+  resolveInstance: (pair) => {
+    const c = pair.color ?? randomColor();
+    return { leftColor: c, rightColor: c };
+  },
+  render: ({ scene, x, y, radius, role, pair }) => {
+    const container = scene.add.container(x, y);
+    // fontSizePx * radius floor of 60 (MatchScene's clamp) => >=96 CSS px,
+    // satisfying the spec's "fontSize >= 96px at phone scale" floor while
+    // scaling proportionally everywhere else (menu cards, tablet, etc.)
+    // the same way every other renderer's `radius` already does.
+    const text = createEmojiText(scene, pair.emoji ?? '❓', radius * 1.6);
+    container.add(text);
+    // Left = the "friendly" side, gets a subtle idle breathing loop instead
+    // of drawn eyes (emoji glyphs already have faces). Right stays static.
+    if (role === 'left') {
+      scene.tweens.add({
+        targets: container,
+        scale: { from: 1, to: 1.06 },
+        duration: 900,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
+    return {
+      container,
+      // Tinting/desaturating emoji glyph text is unreliable across
+      // platforms (font-rendered color glyphs largely ignore fill/tint), so
+      // the matched-style treatment is alpha-only rather than the
+      // desaturate+dim combo the other renderers use.
+      applyMatchedStyle: () => container.setAlpha(0.35),
+    };
+  },
+};
+
+export const RENDERERS: Record<RendererKind, RendererDef> = { colorBlob, shape, shadow, object, destination, emoji };
