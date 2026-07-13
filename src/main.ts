@@ -4,6 +4,7 @@ import { MenuScene } from './scenes/MenuScene';
 import { MatchScene } from './scenes/MatchScene';
 import { SortScene } from './scenes/SortScene';
 import { QuizScene } from './scenes/QuizScene';
+import { MemoryScene } from './scenes/MemoryScene';
 import { AudioManager } from './audio/AudioManager';
 
 // Disable double-tap zoom, pinch zoom, pull-to-refresh, and the long-press
@@ -36,9 +37,9 @@ const game = new Phaser.Game({
     zoom: 1 / dpr,
   },
   // MenuScene first = the auto-started entry point; MatchScene/SortScene/
-  // QuizScene are only ever started explicitly (from a menu card tap) with
-  // init data.
-  scene: [MenuScene, MatchScene, SortScene, QuizScene],
+  // QuizScene/MemoryScene are only ever started explicitly (from a menu card
+  // tap) with init data.
+  scene: [MenuScene, MatchScene, SortScene, QuizScene, MemoryScene],
 });
 
 // Dev-only scene-introspection hook (Vite statically strips this whole block

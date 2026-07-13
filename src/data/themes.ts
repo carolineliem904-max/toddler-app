@@ -62,7 +62,11 @@ const DESTINATION_POOL: PairDef[] = [
 // identity color used only for the connecting-line/confetti flair and menu
 // card panel tint (see renderers.ts's `emoji` RendererDef; real emoji glyph
 // coloring is platform-font-dependent and not something we control).
-const ANIMAL_POOL: PairDef[] = [
+// Exported (unlike the other pools) so MemoryScene's memoryGames.ts can reuse
+// these exact glyph sets rather than maintaining a separate duplicate list —
+// per Slice 7 spec ("reuse animals/fruits pools"), keeping the memory game's
+// emoji set in sync with whatever these pools contain.
+export const ANIMAL_POOL: PairDef[] = [
   { id: 'dog', emoji: '🐶', color: 0xc68642 },
   { id: 'cat', emoji: '🐱', color: 0xf4a341 },
   { id: 'rabbit', emoji: '🐰', color: 0xf0c9c9 },
@@ -82,7 +86,7 @@ const VEHICLE_POOL: PairDef[] = [
   { id: 'bicycle', emoji: '🚲', color: 0x333333 },
 ];
 
-const FRUIT_POOL: PairDef[] = [
+export const FRUIT_POOL: PairDef[] = [
   { id: 'apple', emoji: '🍎', color: 0xe0483c },
   { id: 'banana', emoji: '🍌', color: 0xffd500 },
   { id: 'grapes', emoji: '🍇', color: 0xaf52de },

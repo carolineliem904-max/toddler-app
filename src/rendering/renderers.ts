@@ -73,7 +73,13 @@ function diamondCorners(radius: number): number[] {
   return pts;
 }
 
-function starPoints(outerR: number, innerR: number, spikes = 5): number[] {
+// Exported (unlike the other polygon-corner helpers) because MemoryScene's
+// face-down star-sticker motif and MenuScene's memory menu-card preview both
+// need the identical star geometry — a tiny, pure, stateless formula, unlike
+// the full-scene duplication this codebase otherwise prefers (see HANDOFF:
+// home button / confetti duplicated verbatim across scenes). Sharing a ~10
+// line trig helper isn't the same category of choice as sharing scene logic.
+export function starPoints(outerR: number, innerR: number, spikes = 5): number[] {
   const pts: number[] = [];
   const step = Math.PI / spikes;
   let angle = -Math.PI / 2;

@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { type PairDef, type Theme } from '../data/themes';
 import { MENU_ENTRIES, type MenuEntry } from '../data/menuEntries';
-import { RENDERERS } from '../rendering/renderers';
+import { RENDERERS, starPoints } from '../rendering/renderers';
 import { createEmojiText } from '../rendering/emojiText';
 import { lighten, darken } from '../utils/color';
 import { PALETTE } from '../data/palette';
@@ -14,16 +14,14 @@ const BACKGROUND_COLOR = 0xfff8ee;
 // cards at 390px phone width. See HANDOFF decisions.
 const MENU_EDGE_MARGIN_PX = 24;
 const CARD_GAP_PX = 12;
-// 160px was the original per-card target (still what computeGrid() reaches
-// whenever geometry allows — confirmed at up to 8 cards on both tested
-// viewports). CARD_SAFETY_FLOOR_PX is the true, never-violated floor:
-// CLAUDE.md's 120px touch-target minimum. Slice 5's 9th card (8 themes + 1
-// sort game) doesn't fit 160px cards in 2 columns on a 390x844 phone without
-// either scrolling (unsupported) or shrinking below 160 — see computeGrid()'s
-// adaptive column choice and HANDOFF Slice 5 decisions for the full math.
+// 160px was the original per-card target (still what computeLayout() reaches
+// whenever geometry allows). CARD_SAFETY_FLOOR_PX is the true, never-violated
+// floor: CLAUDE.md's 120px touch-target minimum.
 const CARD_SAFETY_FLOOR_PX = 120;
 const CARD_MAX_PX = 240;
-const GRID_COLUMN_CANDIDATES = [2, 3];
+// Fixed at 2 (see computeLayout's comment) — Slice 7 replaces the old
+// candidate-column search now that the grid scrolls vertically.
+const GRID_COLS = 2;
 const MUTE_BUTTON_SIZE_PX = 80; // same size discipline as MatchScene's home button
 // Reserves top clearance for the mute button, same fix as MatchScene's
 // TOP_MARGIN_PX (HANDOFF Slice 3): a fixed-size corner button and a
@@ -31,6 +29,13 @@ const MUTE_BUTTON_SIZE_PX = 80; // same size discipline as MatchScene's home but
 // pushed clear of the button's footprint. Verified via headless testing at
 // 390x667 before this fix was in place.
 const TOP_CLEARANCE_PX = MENU_EDGE_MARGIN_PX + MUTE_BUTTON_SIZE_PX + 16;
+
+// --- Slice 7: scroll / tap-vs-scroll disambiguation ---
+// "movement under ~12css px = tap, over = scroll" (spec, verbatim threshold).
+const TAP_MOVEMENT_THRESHOLD_CSS = 12;
+// "Cards partially visible at the fold should be tappable only when >=60%
+// visible" (spec, verbatim).
+const CARD_VISIBILITY_TAP_THRESHOLD = 0.6;
 
 // Which pair/role represents each theme on its menu card. Defaults to the
 // pool's first pair, shown as the "left" (friendly, eyed) character. Themes
@@ -77,9 +82,25 @@ function pickCardPair(theme: Theme): { pair: PairDef; role: 'left' | 'right'; co
   return { pair: byId ?? theme.pairs[0]!, role, color: override?.color };
 }
 
+interface CardMeta {
+  entry: MenuEntry;
+  container: Phaser.GameObjects.Container;
+  x: number; // CSS px, does not scroll
+  baseY: number; // CSS px, pre-scroll-offset position
+  size: number; // CSS px
+}
+
 export class MenuScene extends Phaser.Scene {
   private lastSize = { w: 0, h: 0 };
   private muteButton: Phaser.GameObjects.Container | null = null;
+  private cardsMeta: CardMeta[] = [];
+  private scrollY = 0; // CSS px, 0 = scrolled to top
+  private maxScroll = 0;
+  private isDragging = false;
+  private dragStartPointer = { x: 0, y: 0 }; // device px
+  private dragStartScrollY = 0;
+  private dragMaxMovementCss = 0;
+  private tapCandidate: CardMeta | null = null;
 
   constructor() {
     super('MenuScene');
@@ -89,15 +110,34 @@ export class MenuScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(BACKGROUND_COLOR);
     this.lastSize = { w: this.scale.width, h: this.scale.height };
     this.scale.on('resize', this.handleResize, this);
-    this.events.once('shutdown', () => this.scale.off('resize', this.handleResize, this));
+    this.input.on('pointerdown', this.handlePointerDown, this);
+    this.input.on('pointermove', this.handlePointerMove, this);
+    this.input.on('pointerup', this.handlePointerUp, this);
+    this.events.once('shutdown', () => {
+      this.scale.off('resize', this.handleResize, this);
+      this.input.off('pointerdown', this.handlePointerDown, this);
+      this.input.off('pointermove', this.handlePointerMove, this);
+      this.input.off('pointerup', this.handlePointerUp, this);
+    });
+
+    // Explicit reset: Phaser reuses this Scene instance across
+    // scene.start()/restart() calls (same gotcha as every other scene's
+    // instance-reuse notes), so scroll/drag state must not carry over from a
+    // prior visit or a mid-drag resize-restart.
+    this.scrollY = 0;
+    this.isDragging = false;
+    this.tapCandidate = null;
+    this.cardsMeta = [];
 
     const dpr = window.devicePixelRatio || 1;
-    const { positions, cardSize } = this.computeGrid(MENU_ENTRIES.length);
+    const { positions, cardSize, maxScroll } = this.computeLayout(MENU_ENTRIES.length);
+    this.maxScroll = maxScroll;
 
     MENU_ENTRIES.forEach((entry, i) => {
       const pos = positions[i];
       if (!pos) return;
-      this.createCard(entry, pos.x, pos.y, cardSize, dpr, i);
+      const container = this.createCard(entry, pos.x, pos.y, cardSize, dpr, i);
+      this.cardsMeta.push({ entry, container, x: pos.x, baseY: pos.y, size: cardSize });
     });
 
     this.createMuteButton();
@@ -112,13 +152,18 @@ export class MenuScene extends Phaser.Scene {
     this.scene.restart();
   }
 
-  // Tries each candidate column count and keeps whichever yields the larger
-  // resulting card size for the current viewport + entry count (this is the
-  // spec's "3-col on tablet if needed" — expressed as "pick whichever fits
-  // best" rather than a hardcoded width breakpoint, so it keeps working as
-  // entries are added later). See HANDOFF Slice 5 decisions for the concrete
-  // numbers at both tested viewports.
-  private computeGrid(count: number): { positions: { x: number; y: number }[]; cardSize: number } {
+  // Fixed at 2 columns. Slice 6's candidate-column search (trying [2, 3] and
+  // picking whichever fit best) existed *only* to trade columns for vertical
+  // fit when the grid couldn't scroll — cellH was a hard constraint, and 3
+  // narrower columns sometimes cleared it when 2 wider ones didn't (that's
+  // literally why 11 cards landed on 3 columns at Slice 6). Now that the
+  // grid scrolls, height is no longer a constraint at all: cellW alone
+  // decides card size, and cellW is provably always larger with fewer
+  // columns (cellW(2) - cellW(3) = (usableW + gap) / 6 > 0 for any positive
+  // width/gap) — so 3 columns could never win the old comparison once cellH
+  // drops out of it. Rather than keep dead candidate-search logic that can
+  // only ever pick one answer, this is just a fixed 2-column grid.
+  private computeLayout(count: number): { positions: { x: number; y: number }[]; cardSize: number; maxScroll: number } {
     const dpr = window.devicePixelRatio || 1;
     const cssW = this.scale.width / dpr;
     const cssH = this.scale.height / dpr;
@@ -126,45 +171,27 @@ export class MenuScene extends Phaser.Scene {
     const usableW = cssW - MENU_EDGE_MARGIN_PX * 2;
     const usableH = cssH - TOP_CLEARANCE_PX - MENU_EDGE_MARGIN_PX;
 
-    let cols = GRID_COLUMN_CANDIDATES[0]!;
-    let bestSize = 0;
-    for (const candidateCols of GRID_COLUMN_CANDIDATES) {
-      const rows = Math.ceil(count / candidateCols);
-      const cellW = (usableW - CARD_GAP_PX * (candidateCols - 1)) / candidateCols;
-      const cellH = (usableH - CARD_GAP_PX * (rows - 1)) / rows;
-      const size = Math.min(cellW, cellH, CARD_MAX_PX);
-      if (size > bestSize) {
-        bestSize = size;
-        cols = candidateCols;
-      }
-    }
-    // bestSize is the true geometric maximum across the candidate column
-    // counts — it must NEVER be forced up past what the viewport can
-    // actually fit. An earlier version of this code did `Math.max(
-    // CARD_SAFETY_FLOOR_PX, bestSize)`, which worked by coincidence through
-    // Slice 5 (bestSize dipped under the floor only at 9 cards, and forcing
-    // it up to exactly 120 still happened to clear the viewport there) but
-    // breaks at Slice 6's 11 cards: forcing a 2-column, 6-row grid up to
-    // 120px cards overflows ~80px past the bottom safe margin. Using
-    // bestSize as-is can never overflow, by construction (it's already the
-    // largest size that fits); CARD_SAFETY_FLOOR_PX becomes a pure
-    // documentation/logging reference instead of an enforced clamp.
-    const cardSize = bestSize;
+    const cellW = (usableW - CARD_GAP_PX * (GRID_COLS - 1)) / GRID_COLS;
+    const cardSize = Math.min(cellW, CARD_MAX_PX);
     if (cardSize < CARD_SAFETY_FLOOR_PX) {
       console.info(
-        `[MenuScene] ${count}-card grid at ${Math.round(cssW)}x${Math.round(cssH)} can't reach the ${CARD_SAFETY_FLOOR_PX}px floor (best: ${Math.round(cardSize)}px) — see HANDOFF Slice 6 notes.`,
+        `[MenuScene] ${count}-card grid at ${Math.round(cssW)}x${Math.round(cssH)} can't reach the ${CARD_SAFETY_FLOOR_PX}px floor (best: ${Math.round(cardSize)}px).`,
       );
     }
-    const rows = Math.ceil(count / cols);
 
+    const rows = Math.ceil(count / GRID_COLS);
     const gridH = rows * cardSize + (rows - 1) * CARD_GAP_PX;
-    const gridTop = TOP_CLEARANCE_PX + Math.max(0, (usableH - gridH) / 2);
+    // Scrollable content starts flush at the top; a board that fits without
+    // scrolling stays vertically centered (Slice 6 behavior, preserved) —
+    // this is the "degrade gracefully to static" case from the spec.
+    const maxScroll = Math.max(0, gridH - usableH);
+    const gridTop = maxScroll > 0 ? TOP_CLEARANCE_PX : TOP_CLEARANCE_PX + Math.max(0, (usableH - gridH) / 2);
 
     const positions: { x: number; y: number }[] = [];
     for (let i = 0; i < count; i++) {
-      const row = Math.floor(i / cols);
-      const col = i - row * cols;
-      const itemsInRow = Math.min(cols, count - row * cols);
+      const row = Math.floor(i / GRID_COLS);
+      const col = i - row * GRID_COLS;
+      const itemsInRow = Math.min(GRID_COLS, count - row * GRID_COLS);
       const rowWidth = itemsInRow * cardSize + (itemsInRow - 1) * CARD_GAP_PX;
       const rowLeft = (cssW - rowWidth) / 2;
       const x = rowLeft + col * (cardSize + CARD_GAP_PX) + cardSize / 2;
@@ -172,17 +199,114 @@ export class MenuScene extends Phaser.Scene {
       positions.push({ x, y });
     }
 
-    return { positions, cardSize };
+    return { positions, cardSize, maxScroll };
+  }
+
+  // --- Scroll / tap-vs-scroll disambiguation ---
+  //
+  // Builder's choice (spec): simple direct drag (no momentum), hard-stop
+  // clamping (no rubber-band overshoot-then-settle) — the clamp is applied
+  // on every pointermove, so the grid can never be dragged past its bounds
+  // in the first place, which also means no scissor mask is needed (a card
+  // can never render above the top clearance or below the bottom margin).
+  //
+  // Tap-vs-scroll is resolved by tracking a gesture's *maximum* displacement
+  // from its start point (Euclidean, not just vertical — a toddler's finger
+  // can wobble sideways too) across the whole pointer-down-to-up lifetime,
+  // and only firing a card's tap action on release if that never exceeded
+  // TAP_MOVEMENT_THRESHOLD_CSS. This is why cards no longer wire their own
+  // 'pointerdown' -> instant-navigate handler (Slice 6 and earlier): a tap
+  // can't be told apart from the start of a scroll until either the gesture
+  // ends or the threshold is crossed, so the actual navigate action has to
+  // wait for pointerup. Cards still call setInteractive() (see createCard)
+  // purely so they remain visible to introspection tooling
+  // (scripts/verify-audio-paths.ts reads `.input`-bearing Containers) — no
+  // listener is attached to it.
+  private handlePointerDown(pointer: Phaser.Input.Pointer): void {
+    this.isDragging = true;
+    this.dragStartPointer = { x: pointer.x, y: pointer.y };
+    this.dragStartScrollY = this.scrollY;
+    this.dragMaxMovementCss = 0;
+    this.tapCandidate = this.hitTestCard(pointer.x, pointer.y);
+  }
+
+  private handlePointerMove(pointer: Phaser.Input.Pointer): void {
+    if (!this.isDragging || !pointer.isDown) return;
+    const dpr = window.devicePixelRatio || 1;
+    const dxCss = (pointer.x - this.dragStartPointer.x) / dpr;
+    const dyCss = (pointer.y - this.dragStartPointer.y) / dpr;
+    this.dragMaxMovementCss = Math.max(this.dragMaxMovementCss, Math.hypot(dxCss, dyCss));
+
+    if (this.maxScroll > 0) {
+      // Finger moves up (dyCss < 0) -> content scrolls down (scrollY grows).
+      this.scrollY = Phaser.Math.Clamp(this.dragStartScrollY - dyCss, 0, this.maxScroll);
+      this.applyScroll();
+    }
+  }
+
+  private handlePointerUp(): void {
+    if (!this.isDragging) return;
+    this.isDragging = false;
+    const candidate = this.tapCandidate;
+    this.tapCandidate = null;
+    if (this.dragMaxMovementCss >= TAP_MOVEMENT_THRESHOLD_CSS || !candidate) return;
+    if (!this.isCardVisibleEnough(candidate)) return;
+    this.handleCardTap(candidate.entry, candidate.container);
+  }
+
+  private applyScroll(): void {
+    const dpr = window.devicePixelRatio || 1;
+    this.cardsMeta.forEach((meta) => {
+      meta.container.y = (meta.baseY - this.scrollY) * dpr;
+    });
+  }
+
+  private hitTestCard(px: number, py: number): CardMeta | null {
+    const dpr = window.devicePixelRatio || 1;
+    for (const meta of this.cardsMeta) {
+      const cx = meta.x * dpr;
+      const cy = (meta.baseY - this.scrollY) * dpr;
+      const half = (meta.size * dpr) / 2;
+      if (Math.abs(px - cx) <= half && Math.abs(py - cy) <= half) return meta;
+    }
+    return null;
+  }
+
+  private isCardVisibleEnough(meta: CardMeta): boolean {
+    const dpr = window.devicePixelRatio || 1;
+    const cssH = this.scale.height / dpr;
+    const viewTop = TOP_CLEARANCE_PX;
+    const viewBottom = cssH - MENU_EDGE_MARGIN_PX;
+    const cardTop = meta.baseY - this.scrollY - meta.size / 2;
+    const cardBottom = meta.baseY - this.scrollY + meta.size / 2;
+    const overlap = Math.max(0, Math.min(cardBottom, viewBottom) - Math.max(cardTop, viewTop));
+    return overlap / meta.size >= CARD_VISIBILITY_TAP_THRESHOLD;
+  }
+
+  private handleCardTap(entry: MenuEntry, container: Phaser.GameObjects.Container): void {
+    AudioManager.sfx('click');
+    this.tweens.add({
+      targets: container,
+      scale: 0.92,
+      duration: 90,
+      yoyo: true,
+      onComplete: () => {
+        if (entry.kind === 'match') this.scene.start('MatchScene', { theme: entry.theme });
+        else if (entry.kind === 'sort') this.scene.start('SortScene', { game: entry.game });
+        else if (entry.kind === 'quiz') this.scene.start('QuizScene', { game: entry.game });
+        else this.scene.start('MemoryScene', { game: entry.game });
+      },
+    });
   }
 
   // Card art is fully delegated to RENDERERS[theme.renderer] for 'match'
-  // entries — no hardcoded per-theme art lives here. 'sort' and 'quiz'
+  // entries — no hardcoded per-theme art lives here. 'sort'/'quiz'/'memory'
   // entries aren't theme/renderer-based at all, so their card art is drawn
-  // directly from their own literal data (cardEmoji glyph / menuCard spec).
-  // This is a single, contained kind-level branch (match vs sort vs quiz),
-  // not a per-theme branch — it doesn't reintroduce the per-theme branching
-  // CLAUDE.md rules out.
-  private createCard(entry: MenuEntry, x: number, y: number, sizeCss: number, dpr: number, index: number): void {
+  // directly from their own literal data (cardEmoji glyph / menuCard spec /
+  // hardcoded fanned-card-backs icon). This is a single, contained kind-level
+  // branch, not a per-theme branch — it doesn't reintroduce the per-theme
+  // branching CLAUDE.md rules out.
+  private createCard(entry: MenuEntry, x: number, y: number, sizeCss: number, dpr: number, index: number): Phaser.GameObjects.Container {
     const cx = x * dpr;
     const cy = y * dpr;
     const s = sizeCss * dpr;
@@ -213,7 +337,7 @@ export class MenuScene extends Phaser.Scene {
     } else if (entry.kind === 'sort') {
       drawPanel(entry.game.cardColor);
       container.add(createEmojiText(this, entry.game.cardEmoji, s * 0.5));
-    } else {
+    } else if (entry.kind === 'quiz') {
       drawPanel(entry.game.cardColor);
       const card = entry.game.menuCard;
       if (card.kind === 'dots') {
@@ -227,24 +351,16 @@ export class MenuScene extends Phaser.Scene {
         small.setPosition(s * 0.26, s * 0.18);
         container.add([big, small]);
       }
+    } else {
+      drawPanel(entry.game.cardColor);
+      this.drawMemoryCardBacksIcon(container, entry.game.cardColor, s);
     }
 
+    // Hit-area kept purely for introspection tooling (see the scroll-handler
+    // comment above) — no listener attached; MenuScene's own scene-level
+    // pointer handlers drive the actual tap/scroll behavior.
     container.setSize(s, s);
     container.setInteractive();
-    container.on('pointerdown', () => {
-      AudioManager.sfx('click');
-      this.tweens.add({
-        targets: container,
-        scale: 0.92,
-        duration: 90,
-        yoyo: true,
-        onComplete: () => {
-          if (entry.kind === 'match') this.scene.start('MatchScene', { theme: entry.theme });
-          else if (entry.kind === 'sort') this.scene.start('SortScene', { game: entry.game });
-          else this.scene.start('QuizScene', { game: entry.game });
-        },
-      });
-    });
 
     // One-time entry bounce, staggered — no looping animation to compete
     // with the toddler's choice-making.
@@ -256,6 +372,41 @@ export class MenuScene extends Phaser.Scene {
       delay: index * 60,
       ease: 'Back.easeOut',
     });
+
+    return container;
+  }
+
+  // Memory game's menu card: two fanned face-down "card backs" (same rounded
+  // rect + star-sticker motif MemoryScene itself draws for a face-down
+  // card, at a smaller preview scale) — the card previews the mechanic
+  // itself (a stack of memory cards) rather than a single glyph.
+  private drawMemoryCardBacksIcon(container: Phaser.GameObjects.Container, color: number, size: number): void {
+    const cardW = size * 0.34;
+    const cardH = size * 0.46;
+
+    const drawBack = (rotation: number, offsetX: number, offsetY: number, fillColor: number) => {
+      const g = this.add.graphics();
+      g.fillStyle(fillColor, 1);
+      g.lineStyle(Math.max(2, size * 0.015), 0x2b2b2b, 0.15);
+      g.fillRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, cardW * 0.18);
+      g.strokeRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, cardW * 0.18);
+
+      const pts = starPoints(cardW * 0.22, cardW * 0.1);
+      g.fillStyle(0xfff8ee, 0.9);
+      g.beginPath();
+      g.moveTo(pts[0] ?? 0, pts[1] ?? 0);
+      for (let i = 2; i < pts.length; i += 2) g.lineTo(pts[i] ?? 0, pts[i + 1] ?? 0);
+      g.closePath();
+      g.fillPath();
+
+      const wrapper = this.add.container(offsetX, offsetY);
+      wrapper.setRotation(rotation);
+      wrapper.add(g);
+      container.add(wrapper);
+    };
+
+    drawBack(-0.14, -size * 0.08, size * 0.03, darken(color, 0.08));
+    drawBack(0.14, size * 0.1, -size * 0.02, color);
   }
 
   // The only chrome MenuScene adds beyond the cards. Gameplay (MatchScene)

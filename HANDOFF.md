@@ -1,302 +1,316 @@
-# HANDOFF — Toddler Matching Game, Slice 6
+# HANDOFF — Toddler Matching Game, Slice 7
 
 ## Context
-Slice 5 complete: emoji renderer, 8 matching themes + fruit sort (SortScene), unified MenuEntry
-model, AudioManager with synth SFX + graceful voice loading.
-Read HANDOFF.md decisions first (scene reuse gotcha, MenuEntry model, drag forgiveness notes,
-emoji retina handling via createEmojiText).
-This slice: the tap-the-answer engine (QuizScene) + two games: counting 1–5 and big-vs-small.
+Slice 6 complete: QuizScene (counting digit+dots, big/small with voice/visual-cue dual mode),
+11-card menu at its geometric limit (flagged: 12th entry needs menu scrolling).
+Read HANDOFF.md decisions first (scene reuse gotcha, MenuEntry model, createEmojiText,
+grid clamping fix).
+This slice: (A) menu scroll, (B) memory flip game, (C) Vercel deployment prep + PWA basics.
 
-## Part A — QuizScene (new mechanic: prompt + answer cards)
+## Part A — Menu scrolling (prerequisite for the 12th card)
+- Convert MenuScene's grid to a vertically scrollable container (Phaser camera scroll or
+  container + drag — builder's choice, document it). Requirements:
+  - Touch-drag scrolling with momentum feel is NOT required — simple direct drag is fine
+    and more predictable for toddlers. No scrollbars, no visual chrome.
+  - Rubber-band or hard-stop at ends (no infinite scroll, no wrap).
+  - CRITICAL: a drag that scrolls must NOT fire a card tap on release. Tap vs scroll
+    disambiguation: movement under ~12css px = tap, over = scroll (document threshold chosen).
+  - Cards partially visible at the fold should be tappable only when ≥60% visible (prevents
+    accidental edge taps mid-scroll).
+- Verify scroll + tap disambiguation headless at both viewports, and the no-scroll case
+  (tablet may fit all 12 without scrolling — behavior must degrade gracefully to static).
 
-### Structure
-- New `src/scenes/QuizScene.ts`, data-driven like SortScene:
-```ts
-  interface QuizGame {
-    id: string;
-    generateRound(): QuizRound;   // fresh random round each time
-  }
-  interface QuizRound {
-    prompt: PromptSpec;           // what's displayed in the prompt zone (top ~40% of screen)
-    answers: AnswerSpec[];        // 2–3 cards, exactly one correct
-    introVoice?: string;          // manifest key, fires at round start
-  }
-```
-- Layout: prompt zone top ~40%, answer cards in a row below. Cards ≥160px, same edge/clearance
-  discipline as everywhere. Home button: same pattern (destroy-on-recreate!).
-- Interaction: tap an answer card.
-  - Correct → card pops + chime, prompt zone does a happy bounce, confetti, then next round
-    after ~1.2s. Every N=5 correct rounds → full celebration (fanfare + praise voice), then
-    continue. (A quiz round is shorter than a matching board, so celebrating every round
-    would wear out fast — rhythm: small win every round, big win every 5.)
-  - Wrong → neutral boop + wiggle on the tapped card, card dims to 50% and becomes untappable
-    (narrowing the choice — this is scaffolding, not punishment), correct answer stays available.
-    No streak reset, no fail state.
+## Part B — Memory flip game (new mechanic, deliberately tiny)
+- New `src/scenes/MemoryScene.ts`. 2–3yo memory is SHORT: grid of 4 cards (2 pairs) only.
+  (Classic memory is 3–4+; this is the intro version. A bigger grid is a future age-mode.)
+- Cards: face-down shows a neutral pattern (soft rounded rect + ? — no, no glyphs: use a
+  simple star sticker motif drawn via Graphics). Face-up shows an emoji from a small pool
+  (reuse animals/fruits pools).
+- Interaction: tap flips a card (250ms flip tween — scaleX trick is fine). Two face-up:
+  - Match → both pulse + chime + stay face-up; when all matched → celebration (existing
+    pattern) → new round (fresh pair sample).
+  - No match → both stay visible ~900ms (toddlers need longer look time than adults),
+    then flip back with the neutral boop. No fail state, no attempt counting.
+- Only 2 cards can be face-up at once; taps during resolve are ignored (input lock —
+  test this, it's the classic memory-game race bug).
+- Menu card: two Graphics card-backs slightly fanned. Voice manifest: `game_memory_intro`
+  ("Di mana kembarannya?"). Extend recording checklist (13 lines).
+- Home button: standard pattern (destroy-on-recreate).
 
-### Game 1: Counting 1–5 (`counting`)
-- Prompt: N of the same emoji (N random 1–5), arranged in a loose cluster (not a straight
-  line — counting scattered objects is the actual skill). Emoji drawn from a small pool
-  (🍎🐤🐟🌸⚽) — one kind per round. **Amended post-launch after real-toddler QA:** the
-  original wide organic disk-scatter read as too spread out to count reliably; tightened to a
-  compact "loose grid" — still not a rigid straight line, but a tidy, countable-at-a-glance
-  group (see decisions below).
-- Answers: 3 cards. Correct card = N; distractors = N±1 (clamped to 1–5, never duplicate
-  counts). **Amended post-launch after real-toddler QA:** the original design was dot-only
-  (no digits); testers found dot-only harder to read at a glance than expected, so answer
-  cards now show a large digit PLUS a tidy single-row dot count beneath it (see Slice 6
-  status/decisions below for the combined design and the updated dots-vs-digits rationale).
-- Rationale (document in HANDOFF): subitizing (instant quantity recognition) precedes numeral
-  literacy, which is why dots stay part of the display — but real toddler QA showed a bare
-  digit alongside the dots reads faster than dots alone for this age band, so **combined
-  digit+dots is now the 2–3yo mode**; a digit-ONLY mode (no dots at all) remains the future
-  3–4yo difficulty step, same pattern as SHAPE_CROSS_COLOR_MODE.
-- Voice: `quiz_counting_intro` ("Ayo hitung! Ada berapa?") at round start.
-- Menu card: 🔢? No — no digits on the toddler surface. Use three dots (⚫⚫⚫ drawn as
-  Graphics) on the card. Document in CARD assignments.
-
-### Game 2: Big vs Small (`bigsmall`)
-- Prompt zone: EMPTY except a soft prompt glow — this game's prompt IS the voice line.
-- Answers: 2 cards, same emoji at two clearly different scales (ratio ≥ 2.2:1 so the
-  difference is unmistakable; document chosen sizes). Emoji pool: 🐘🐶🚗⚽🐟🌸.
-- Each round randomly asks for BIG or SMALL: voice `quiz_big_intro` ("Mana yang besar?") or
-  `quiz_small_intro` ("Mana yang kecil?").
-- CRITICAL fallback: if the required voice file is missing (voice system's graceful-absence
-  mode), this game is unplayable-by-guessing. In that case QuizScene must show a visual cue
-  instead: a pulsing outline sized LIKE the target (a big dashed circle for "big", small for
-  "small") in the prompt zone. Game must be self-explanatory in both audio and no-audio states.
-  Document the cue design.
-- Menu card: 🐘 next to a tiny 🐘 (two text objects) — the card itself previews the concept.
-
-## Part B — Menu integration
-- Two new MenuEntry items (QuizScene + per-game config), menu now 11 cards. Verify grid at
-  both viewports (3-col likely needed on phone now — cards may not fit at 2-col × 6 rows;
-  keep cards ≥160px and re-run the differentiation matrix including the two new cards).
-
-## Part C — Voice manifest additions
-- `quiz_counting_intro` — "Ayo hitung! Ada berapa?"
-- `quiz_big_intro` — "Mana yang besar?"
-- `quiz_small_intro` — "Mana yang kecil?"
-- Extend the HANDOFF recording checklist table (now 12 lines total). Same graceful absence.
+## Part C — Deployment prep (Vercel + minimal PWA)
+- Ensure `npm run build` produces a clean static build; fix anything Vite flags.
+- `vercel.json` if needed (SPA, no rewrites expected for a single-page Phaser app — keep minimal).
+- Minimal PWA layer, same scope as Beep Beep!: manifest.json (name "Toddler Match", portrait
+  orientation preference, theme color matching the cream bg, icons — generate simple placeholder
+  icons from the red-circle-with-eyes motif via a small build script or static pngs),
+  apple-touch-icon, and a basic service worker for offline asset caching (vite-plugin-pwa is
+  fine and battle-tested from Beep Beep!; pin its version).
+  Rationale: this app's real usage is "kid grabs phone in the car" — offline matters more
+  than for most apps.
+- Voice files: ensure the build/deploy pipeline includes public/audio/voice/ contents when
+  present, and the graceful-absence behavior is verified in the BUILT app (not just dev) —
+  service worker must not cache-poison missing-then-added voice files (verify: deploy-like
+  serve of dist/, add a file, confirm it's picked up after SW update cycle; document SW
+  update strategy chosen — autoUpdate is fine).
+- Do NOT deploy — Caroline connects the repo to Vercel herself (same flow as her other apps).
+  Definition of done covers a local `npm run build && preview` verification only.
 
 ## Definition of done
-- Both quiz games playable from menu; correct/wrong/5-round-celebration rhythm works.
-- Counting: dot arrangements verified legible at phone size; distractor logic verified over
-  many generated rounds (headless: assert never-duplicate answer counts, correct always present).
-- Big/small: BOTH modes verified — with a dummy voice file present AND with zero files
-  (visual cue mode). Scale ratio documented.
-- Wrong-answer dimming verified: after a wrong tap, that card is untappable and the round
-  remains completable.
-- Full regression: all Slice 5 flows still pass, both viewports, zero console errors.
-- HANDOFF.md: file map, decisions, updated voice checklist, notes for Slice 7 (likely memory
-  flip + deployment prep — flag anything that would complicate a Vercel static deploy now).
+- 12-entry menu scrolls correctly; tap/scroll disambiguation verified; static fallback on
+  tall viewports verified.
+- Memory game: full round + celebration loop; input-lock race verified (rapid triple-tap test);
+  900ms reveal timing confirmed.
+- `npm run build` clean; `vite preview` serves a fully working app including audio graceful
+  absence; PWA installability checks pass (manifest + SW registered, Lighthouse PWA pass
+  not required but note any misses).
+- Full regression at both viewports, zero console errors.
+- HANDOFF.md: file map, decisions, SW update strategy, extended voice checklist, notes for
+  Slice 8 (likely: patterns game or age-mode selector — flag which looks cheaper given
+  current architecture).
 
 ## Out of scope
-Digits mode, memory, patterns, puzzles, tracing, persistence, parent gate, settings beyond
-mute, deployment itself, age-mode selector, Twemoji.
+Actual Vercel deploy, patterns/puzzles/tracing, persistence beyond PWA caching, parent gate,
+age-mode selector, analytics, Twemoji, bigger memory grids.
 
 ---
 
-## Slice 6 status: DONE
+## Slice 7 status: DONE
 
-`npx tsc --noEmit` clean. Verified with headless-browser tests (Playwright, installed
-temporarily via `npm install --no-save`, fully uninstalled afterward — `package.json`/
-`package-lock.json` untouched) at both 390×844 and 768×1024: menu (now 11 cards) → counting
-quiz (7 rounds, mixing a wrong tap before the correct one every round, confirming dimming +
-completability + the every-5th-round big celebration) → home → big/small quiz in BOTH the
-zero-voice-files state (the real current repo state — confirmed the dashed-outline cue renders)
-and a temporary dummy-audio-file state (confirmed the cue does NOT render when voice is
-confirmed loaded) → home → each of the 8 match themes + fruit sort, one entry each, zero
-console errors throughout. Same brute-force/temporary-`console.debug('[TEST] ...')` +
-temporary `window.__game` methodology as Slices 4–5 for precise scene-state-driven tap
-targeting; all removed before this HANDOFF was written (confirmed absent via
-`grep -rn "\[TEST\]\|__game" src/` and a clean `tsc` re-run). Additionally ran 40,000
-generated rounds (20k counting + 20k bigsmall) plus an exhaustive `countDistractors(1..5)`
-sweep through a standalone `tsx` script — pure data-layer property checks with zero Phaser/DOM
-involved, per the DoD's "headless round-generation property checks" requirement.
+All three parts shipped: MenuScene now scrolls (fixed 2-column grid, hard-stop clamp, tap-vs-
+scroll disambiguation, 60%-visibility fold rule); `MemoryScene` (4-card / 2-pair flip game,
+race-proof input lock) is live as the 12th menu entry; the app builds as an installable PWA
+(manifest, service worker, generated icons) with no Vercel-specific config needed. `npx tsc
+--noEmit` clean throughout.
 
-**A real bug the headless pass caught by eye, not by assertion — again a scatter/overlap bug,
-same class as Slice 5's SortScene item-placement bug.** The counting prompt's first cut used a
-single-pass random-disk-sample-with-retry for its "loose cluster, not a line" placement, with a
-fixed `minSpacing = itemRadius * 2.2` and a "give up and place anyway" fallback after 300
-failed attempts. At phone width, the disk available to the cluster (~85px radius) turned out
-smaller than the required spacing (~88px) for 4–5 items — a packing impossibility, not a rare
-edge case — so the fallback triggered essentially every count-4/5 round, producing two emoji
-rendered on top of each other (looked like one blob with an extra beak/fin poking out).
-Nothing in the property checks caught this (they only assert on round *data* — counts,
-distractor validity — never on pixel layout), and it wasn't obvious from the code review either
-until an actual phone-width screenshot was read. Fixed with adaptive spacing relaxation
-(`clusterPositions`, QuizScene.ts): each point gets bounded-attempt passes, and a failed pass
-shrinks the required spacing by 15% and retries rather than dropping straight to an unspaced
-placement — items stay maximally spread for whatever area is actually available and only pack
-tighter when genuinely necessary. Re-verified via a targeted script that forced and
-screenshotted several count=5 phone-width rounds specifically (the worst case): zero overlap,
-comfortably legible.
+### Verification methodology
+Two layers, matching the project's established split between a **permanent** regression guard
+and **temporary**, delete-after-use behavioral scripts (Slices 4–6's discipline):
 
-**A second real bug, caught proactively this time (before shipping) rather than reactively,
-directly because of the lesson from the bug above and from Slice 5's SortScene precedent:**
-MenuScene's grid math had a latent overflow bug that Slice 5's 9-card menu never triggered.
-`computeGrid()` forced `cardSize = Math.max(CARD_SAFETY_FLOOR_PX, bestSize)` — i.e. it clamped
-the card size *up* to the 120px floor even when the viewport geometry couldn't actually fit
-120px cards at the required column/row count. At 9 cards this coincidentally still fit; at this
-slice's 11 cards (390×844 phone) it does not — a 2-column, 6-row grid forced up to 120px cards
-overflows ~80px past the bottom safe margin, which would have meant real card clipping/overflow
-off-screen. Fixed by using `bestSize` directly (the true geometric maximum across the candidate
-column counts) with no forced-up clamp, so the grid can never overflow by construction; added a
-`console.info` when the achievable size dips below `CARD_SAFETY_FLOOR_PX` so the gap stays
-visible without being an enforced (and overflow-risking) constraint. See decisions below for the
-concrete resulting numbers.
+1. **`scripts/verify-audio-paths.ts` (permanent, extended)** — the Slice 6 audio-call-path
+   regression guard now also covers MemoryScene's four sound events (flip = `select`, mismatch
+   flip-back = `wrong`, pair match = `correct` chime, full board = `celebrate` fanfare),
+   dynamically locating a round's real matching/mismatching pairs from live scene state (never
+   assumed by index — round layout is shuffled) the same way it already does for QuizScene's
+   answer cards. Because the menu now scrolls, its old `getMenuBoxes()` helper (which assumed
+   every card was on-screen at load) had to be replaced with a `menuCardPos(index)` helper that
+   explicitly scrolls the target card into view first — see "bugs found" below. All 10
+   checkpoints pass: click=1, select=1, wrong=1, correct=3, celebrate=12 (MatchScene); pickup=1,
+   correct-drop=4 (SortScene); wrong=1, correct=3 (QuizScene); and the memory sequence
+   (select×2, wrong=1, select×2 + correct=3, select×2 + correct=3, celebrate=12).
+2. **Temporary Playwright scripts (`scripts/tmp-verify-slice7.ts`, `scripts/tmp-verify-
+   build.ts` — both written, run, then deleted; confirmed absent via `grep -rn "tmp-verify"
+   scripts/` and `git status`)** covered everything the audio-path guard deliberately doesn't:
+   - Menu scroll @ both viewports: a >12css px drag scrolls (`scrollY > 0`) and does **not**
+     navigate; a <12css px jitter on a card **still** registers as a tap (real taps aren't
+     pixel-perfect); a card scrolled to ~40% visibility at the bottom fold does **not** register
+     a tap (60%-visibility rule).
+   - Memory input-lock race, at the tightest possible margin: three **synchronous**, zero-
+     elapsed-time calls to the scene's own tap handler (`scene.handleCardTap(cards[0/1/2])`
+     back-to-back in one `page.evaluate()`) plus a realistic rapid-mouse-click burst on 3 real
+     DOM events — both confirm exactly 2 cards are accepted as face-up and the 3rd is rejected
+     (still `'down'`).
+   - Mismatch timing: measured the actual elapsed time from the 2nd tap to the cards flipping
+     back down, confirming it lands in the expected ~1150ms window (250ms flip-resolve delay +
+     900ms look time, per spec).
+   - Full sweep: all 12 menu entries, one visit each, at both viewports (390×844, 768×1024),
+     zero console errors throughout (mirrors Slice 6's "each theme + fruit sort" sweep,
+     extended to the two new mechanics).
+   - Production build (`npm run build && vite preview`, real Chromium): service worker
+     registers and activates; `manifest.webmanifest` is fetchable; the dev-only `window.__game`
+     hook is confirmed dead-code-eliminated (absent) from the prod bundle; the audio graceful-
+     absence `console.info` still fires after a real synthesized user gesture; zero console
+     errors; and — the specific scenario the spec called out — a dummy `.mp3` dropped directly
+     into the **already-built** `dist/audio/voice/` (simulating a static host gaining a file
+     the currently-installed service worker's precache manifest never listed) is fetchable
+     through that same already-registered SW on reload, not served a cached/poisoned 404.
 
-**Post-launch update: real-toddler QA on the shipped counting game drove two further
-adjustments**, both landed together, `tsc` clean, re-verified with a fresh headless-Playwright
-pass at both viewports (menu → 7 counting rounds with pre-existing wrong-tap/dimming/
-celebration checks all still passing → home → both big/small audio states unchanged/re-confirmed
-→ full 8-theme + fruit-sort regression), zero console errors, plus a targeted screenshot script
-forcing and capturing count=1 and count=5 rounds at both viewports specifically (the range
-extremes) to confirm the new visuals by eye. Same temporary-instrumentation-then-remove
-discipline as before (`window.__game` only this round — no `console.debug('[TEST] ...')` calls
-were needed since the existing scripts already read scene state directly); confirmed absent via
-`grep -rn "\[TEST\]\|__game" src/` and a clean `tsc` re-run.
-1. **Answer cards: digit + dots, not dots-only.** Testers found dot-only harder to read at a
-   glance than expected. Cards now show a large bold numeral (`createDigitText`, system
-   sans-serif font stack, no font file) with a tidy single-row of dots beneath it
-   (`drawDotRow`) — replacing the old 2D dice/domino pip layout (`DICE_DOT_LAYOUTS`,
-   `drawDotCluster`) entirely, since the dots no longer need to stand alone as a recognizable
-   pip pattern once a digit is doing the primary identification work.
-2. **Prompt cluster: tidy loose grid, not wide organic scatter.** Testers found the prompt's
-   disk-scattered emoji read as too spread out to reliably count. Replaced
-   `clusterPositions`/`sampleDiskPoint` (organic disk-sampling with adaptive spacing
-   relaxation — the fix for last round's overlap bug) with `clusterGridPositions`: a compact,
-   roughly-square grid sized to the item count, small per-item jitter so it doesn't look
-   robotically aligned. This is a strictly simpler and more robust replacement, not a
-   patch on top of the old approach — grid cell spacing is fixed by construction, so the
-   entire packing-feasibility bug class from last round (fixed spacing exceeding the
-   available placement area) cannot recur here the way it could with disk-sampling.
+### Bugs found
+Unlike Slices 5 and 6 (which both found real placement/overflow bugs in the *app*), every bug
+this slice surfaced was in the **verification tooling**, not the app itself — worth stating
+plainly rather than implying parity with those prior findings:
+1. `verify-audio-paths.ts`'s `getMenuBoxes()` assumed every menu card was on-screen at
+   `scrollY=0`. Once the menu started scrolling (12 cards; only the first few rows fit in the
+   initial viewport), clicking the fruit-sort/quiz/memory entries' *stale, off-screen*
+   coordinates silently no-opped and the test hung on a `waitForScene` timeout. Fixed with a
+   `menuCardPos(index)` helper that explicitly sets `scene.scrollY` to center the target card
+   (clamped to `[0, maxScroll]`) and calls `scene.applyScroll()` before reading its position —
+   the same direct-scene-state-mutation technique this project's tests already use elsewhere.
+2. The temporary script's own 60%-visibility-fold test had an algebra error in the scroll
+   position it computed to land a card at ~40% visibility, producing a false failure (the tap
+   *did* register, correctly, because the card was actually still >60% visible). Corrected
+   derivation: at `scrollY = maxScroll` the last card's bottom edge sits flush with the
+   viewport's bottom edge (100% visible, by construction of `maxScroll`); solving for `cardTop
+   = viewBottom - 0.4·size` gives `scrollY = baseY - viewBottom - 0.1·size`. Worth flagging
+   since it's exactly the class of mistake prior slices' HANDOFF notes have repeatedly warned
+   about (placement/geometry math needs to be actually checked, not just "looks right").
+3. A test-pacing bug in the memory celebration check: the first attempt waited only 600ms after
+   the round-completing tap, but `celebrate()` actually fires 750ms after that tap (a 250ms
+   flip-resolve delay chained into a 500ms pre-celebrate delay inside `resolvePair()`) —
+   undercounted oscillators (5 instead of 12) until the wait was corrected and reads were split
+   apart to isolate each event, matching the granularity the rest of the script already uses.
 
 ### File map
-- `src/data/quizGames.ts` — new. `PromptSpec` (`emojiCluster` | `sizeCue`), `AnswerSpec`
-  (`dots` | `emojiScale`), `QuizRound`, `QuizMenuCard` (`dots` | `emojiPair`), `QuizGame`.
-  `COUNTING_GAME`: `generateCountingRound()` picks N∈[1,5] and one of 5 emoji, builds 3 shuffled
-  `dots` answers via `countDistractors(n)` (exported for the headless property-check script).
-  `BIGSMALL_GAME`: `generateBigSmallRound()` picks one of 6 emoji and a random big/small target,
-  builds 2 shuffled `emojiScale` answers using exported `BIG_SCALE`/`SMALL_SCALE` (1 / 1÷2.4).
-  Zero Phaser/DOM dependency, matching every other file under `src/data/`.
-- `src/scenes/QuizScene.ts` — new. `startRound()` (clear board, generate round, layout prompt
-  zone + answer zone, play `introVoice`), `createPromptVisual()` branching on `prompt.kind`
-  (`renderEmojiClusterPrompt` / `renderSizeCuePrompt`), `clusterGridPositions()` (tidy compact
-  grid for the prompt's N-emoji cluster — post-launch replacement for the original organic
-  disk-scatter, see the QA-adjustments note above), `computeAnswerLayout()` (adaptive
-  column-count grid for 2–3 answer cards, never forcing beyond what fits — see decisions),
-  `createDigitText()` + `drawDotRow()` (the combined digit+dots answer display — post-launch
-  replacement for the original dots-only `drawDotCluster()`/`DICE_DOT_LAYOUTS`),
-  `handleCorrect()`/`handleWrong()`/`celebrate()`. Home button and confetti helpers are verbatim
-  copies of MatchScene/SortScene's (same destroy-before-recreate discipline; no shared base
-  class, same duplication-over-abstraction precedent as Slice 5).
-- `src/data/menuEntries.ts` — `MenuEntry` gained a third variant, `{ kind: 'quiz'; id; game:
-  QuizGame }`; `MENU_ENTRIES` now appends `QUIZ_GAMES` after `SORT_GAMES` (11 entries total: 8
-  match + 1 sort + 2 quiz).
-- `src/scenes/MenuScene.ts` — `createCard()` gained a third branch for `entry.kind === 'quiz'`,
-  rendering `game.menuCard` (`dots` → new `drawMenuDotsRow()` helper, a plain horizontal row of
-  3 dots, deliberately simpler than QuizScene's in-game dice-pip positions since it's just an
-  identity glyph; `emojiPair` → two `createEmojiText` calls at big/small scale). Tap handler
-  extended to `scene.start('QuizScene', { game: entry.game })`. **`computeGrid()`'s
-  overflow-bug fix** (see above): `cardSize` is now `bestSize` directly, never force-clamped
-  above what the candidate column search actually found fits; `CARD_SAFETY_FLOOR_PX` is now a
-  pure logging/documentation reference via a `console.info` rather than an enforced floor.
-- `src/audio/voiceManifest.ts` — 3 new voice keys (`quiz_counting_intro`, `quiz_big_intro`,
-  `quiz_small_intro`) + manifest entries. No `QUIZ_GAME_INTRO_VOICE` map (unlike
-  `THEME_INTRO_VOICE`/`SORT_GAME_INTRO_VOICE`) — see decisions for why.
-- `src/audio/AudioManager.ts` — new `hasVoice(key)` method: `true` only once a line's buffer
-  has actually finished loading. Purely a query, no new playback path.
-- `src/main.ts` — registers `QuizScene` in the scene list.
-- `HANDOFF.md` — this update; `slice6.md` (the staged spec) removed, its content now lives
+- `src/scenes/MenuScene.ts` — rewritten for scrolling. `computeLayout()` replaces
+  `computeGrid()`: fixed `GRID_COLS = 2` (see decisions for why the old candidate-column search
+  is now dead code), returns `maxScroll` alongside positions/cardSize. New scene-level pointer
+  handlers (`handlePointerDown/Move/Up`) replace per-card `pointerdown` navigation entirely —
+  cards still call `setInteractive()` (kept purely so `scripts/verify-audio-paths.ts`'s
+  `.input`-filtering tooling still finds them) but no listener is attached to it; navigation now
+  fires from `handlePointerUp` only after confirming the whole gesture's max displacement never
+  exceeded `TAP_MOVEMENT_THRESHOLD_CSS` (12) and the tapped card clears
+  `CARD_VISIBILITY_TAP_THRESHOLD` (0.6) at release. `applyScroll()` repositions every card
+  container directly (`container.y = (baseY - scrollY) * dpr`) — no wrapping Container was
+  introduced (see decisions: this keeps cards as direct Scene children, preserving the existing
+  audio-verification tooling's traversal assumptions). New `drawMemoryCardBacksIcon()` for the
+  12th card's menu art (imports `starPoints` from `renderers.ts`).
+- `src/scenes/MemoryScene.ts` — new. `computeLayout()` (fixed 2×2, no candidate search needed —
+  the shape never varies), `createCard()` (back/front sub-containers toggled via `setVisible()`,
+  scaleX-tween flip via `flipUp()`/`flipDown()`), `handleCardTap()` (the input-lock race fix —
+  see decisions), `resolvePair()` (match vs. mismatch branching, mismatch's 900ms look-time +
+  boop-on-flip-back), `celebrate()` (verbatim-pattern copy of MatchScene/SortScene's, not
+  QuizScene's every-5th-round rhythm — see decisions for why).
+- `src/data/memoryGames.ts` — new. `MemoryGame` interface (`id`, `emojiPool`, `cardColor`);
+  `MEMORY_EMOJI_POOL` built from `[...ANIMAL_POOL, ...FRUIT_POOL].map(p => p.emoji)` (reuses
+  the *actual* pool data, not a hand-copied duplicate list, so it can't drift); `MEMORY_GAMES`
+  array (one entry, matching `SORT_GAMES`/`QUIZ_GAMES`'s shape for menuEntries.ts uniformity).
+- `src/data/themes.ts` — `ANIMAL_POOL` and `FRUIT_POOL` are now `export`ed (previously
+  module-private) so `memoryGames.ts` can reuse them.
+- `src/rendering/renderers.ts` — `starPoints()` is now `export`ed (previously module-private) —
+  a deliberate, narrow exception to this project's "duplicate scene logic, don't share a base
+  class" precedent: it's a ~10-line pure trig helper, not scene behavior, and both MenuScene's
+  memory-card preview and MemoryScene's actual face-down sticker need the identical geometry.
+- `src/data/menuEntries.ts` — `MenuEntry` gains a fourth variant, `{ kind: 'memory'; id; game:
+  MemoryGame }`; `MENU_ENTRIES` appends `MEMORY_GAMES` after `QUIZ_GAMES` (12 entries total: 8
+  match + 1 sort + 2 quiz + 1 memory — memory is always the last entry).
+- `src/audio/voiceManifest.ts` — new `game_memory_intro` key/manifest entry + new
+  `MEMORY_GAME_INTRO_VOICE` map (id → key, same static-per-id pattern as
+  `SORT_GAME_INTRO_VOICE`, fires once per menu → entry visit via the same `isResize` guard every
+  other gameplay scene uses).
+- `src/main.ts` — registers `MemoryScene` in the scene list.
+- `scripts/verify-audio-paths.ts` — extended with the memory checkpoints (see "verification
+  methodology"); `getMenuBoxes()` replaced by the scroll-aware `menuCardPos(index)` (see "bugs
+  found").
+- `scripts/generate-icons.ts` — new, **permanent** (not temporary — unlike the tmp-verify-*
+  scripts, this is meant to be re-run whenever the icon design changes, same category as
+  `verify-audio-paths.ts`). Hand-rolled PNG encoder (manual IHDR/IDAT/IEND chunks + CRC32,
+  RGB truecolor, `zlib.deflateSync` for compression) using **zero new dependencies** — a
+  deliberate choice over `sharp`/`canvas` (native bindings are exactly the kind of deploy-risk
+  a "keep minimal" deployment-prep task should avoid). Draws this app's own colorBlob "red
+  circle + eyes" character (same proportions as `renderers.ts`'s `addEyes()`) at icon scale,
+  reusing the app's actual visual identity instead of importing external art. Run via
+  `npm run generate-icons`.
+- `public/icons/icon-192.png`, `icon-512.png`, `apple-touch-icon.png` — new, generated output
+  (committed, not built during `npm run build` — static, like every other asset in this app).
+- `vite.config.ts` — new (this project previously ran on Vite's zero-config defaults).
+  Configures `vite-plugin-pwa` (`registerType: 'autoUpdate'`, manifest inlined here rather than
+  a hand-written `manifest.json` — the plugin generates `manifest.webmanifest` and injects the
+  `<link rel="manifest">` tag automatically). `workbox.globPatterns` includes `mp3` so real
+  voice lines recorded later get precached automatically on their *next* build — no code change
+  needed, matching every other "drop a file in" pattern this app already uses for voice assets.
+- `index.html` — added `<meta name="theme-color" content="#fff8ee">` and `<link rel=
+  "apple-touch-icon">` (the web-manifest `<link>` itself is auto-injected by the plugin at
+  build time, so it doesn't need to be hand-written here).
+- `package.json` / `package-lock.json` — `vite-plugin-pwa` added as a **pinned, exact-version**
+  (`1.3.0`, not `^1.3.0`) `devDependency`, per spec ("pin its version") — confirmed compatible
+  with this project's `vite@8` via its published peerDependencies range. New `generate-icons`
+  script alias.
+- `HANDOFF.md` — this update; `slice7.md` (the staged spec) removed, its content now lives
   here, same consolidation pattern as prior slices.
 
 ### Decisions / deviations
-- **Menu grid overflow fix — concrete numbers.** At 390×844 (phone), 11 cards: the adaptive
-  column search now correctly lands on 3 columns × 4 rows, `cardSize` ≈ **106.7px CSS**
-  (confirmed by direct scene-state measurement, not estimated) — under the 160px target *and*
-  under the 120px `CARD_SAFETY_FLOOR_PX` reference by ~13px, logged via `console.info` rather
-  than silently swallowed. This is a genuine geometric wall at this exact card count/margin/gap
-  combination, not a tuning oversight: fitting 120px cards at 3 columns on a 390px phone would
-  need ~360px of usable width (before gaps) against the ~342px actually available after
-  `MENU_EDGE_MARGIN_PX`'s 24px-per-side safety margin — the two knobs available to close that
-  gap (shrinking the edge-safety margin further, or scrolling) were both rejected: the margin
-  exists specifically to prevent accidental palm touches (shrinking it to chase card count feels
-  backwards), and scrolling is a bigger, out-of-scope UX change for a single slice's menu-count
-  bump. Accepted as a narrow, count-triggered exception — same category as SortScene's 110px
-  item-diameter floor (Slice 5) — and flagged for Slice 7 in case a 12th entry ever gets added.
-  At 768×1024 (tablet), 11 cards: 3 columns × 4 rows, `cardSize` ≈ **211px CSS**, comfortably
-  clearing the 160px target.
-- **`PromptSpec`/`AnswerSpec`/`QuizMenuCard` are small discriminated unions, not a
-  per-game-hardcoded pair of render functions.** With exactly 2 games this slice either shape
-  would work; the union was chosen because QuizScene's rendering code (`createPromptVisual`,
-  `createAnswerCard`) needs to branch on *shape of content* either way, and a typed union keeps
-  that branch exhaustive-checkable by `tsc` rather than stringly-typed. Not a bid for
-  extensibility beyond what's needed — no third variant exists, no plugin registry was built.
-- **Counting distractors: nearest-numeric-neighbor, not literally hardcoded N±1.**
-  `countDistractors(n)` sorts `[1..5]\{n}` by distance from `n` and takes the closest two. For
-  interior `n` (2,3,4) this is exactly the spec's literal "N±1" wording; at the `n=1`/`n=5`
-  edges (where one neighbor doesn't exist) it falls back outward on the in-range side (e.g.
-  `n=1` → `{2,3}`) rather than shipping with only one valid distractor. Exhaustively verified
-  for all of 1–5 in the headless property-check script, plus spot-checks against the literal
-  spec wording for the interior values.
-- **Dot rendering originally used two deliberately different visual languages; superseded
-  post-launch by real-toddler QA (see the QA-adjustments note above).** The original design:
-  answer cards used fixed dice/domino pip layouts (`DICE_DOT_LAYOUTS`, positions 1–5) —
-  structured, recognizable-as-a-symbol — while the prompt's emoji cluster was organic/scattered,
-  explicitly not gridlike. Testers found both choices worked against legibility for this age
-  band (dot-only answers read slower than digit+dots; the scattered prompt read as too spread
-  out to count), so both were changed: answer cards now combine a digit with a plain single-row
-  dot count (`createDigitText` + `drawDotRow`), and the prompt uses a tidy compact grid
-  (`clusterGridPositions`) instead of organic scatter. The one distinction that's still
-  intentional and unchanged: the prompt (real objects to count) and the answers (an abstract
-  quantity symbol) remain visually distinct from each other — a row of dots under a big digit
-  reads differently from N loose emoji, which is the point — they just don't each also carry an
-  *internal* structured-vs-organic distinction anymore.
-- **`hasVoice()` treats "not confirmed loaded" as "missing."** Covers three states identically
-  (muted, still-preloading — the Slice 4 "voice preload race," still unaddressed — and truly
-  absent files) by design: for a game that's otherwise unplayable by guessing, showing the
-  visual cue defensively whenever narration isn't *certain* to play is the only always-correct
-  default. Worst case (voice arrives a beat after the cue already rendered) is a redundant but
-  harmless visual; the alternative (assuming voice will come through) risks a genuinely
-  unplayable round.
-- **Big/small's introVoice lives on the round, not a static per-game map.** Unlike
-  `THEME_INTRO_VOICE`/`SORT_GAME_INTRO_VOICE` (id → fixed voice key), big/small's line depends
-  on the round's random target — `quiz_big_intro` or `quiz_small_intro` — so there's no single
-  static key per game id to look up. `QuizRound.introVoice` carries it directly instead; no
-  `QUIZ_GAME_INTRO_VOICE` map was added.
-- **Size-cue and answer-scale ratio are tied to the same constants.** `BIG_SCALE`/`SMALL_SCALE`
-  (1 / 1÷2.4, exported from `quizGames.ts`) drive both the answer cards' emoji scale AND
-  (multiplied by `SIZE_CUE_BASE_RADIUS_PX = 100`) the no-audio dashed-circle cue's two radii —
-  one ratio, reused, rather than an independently-tuned cue size that could drift out of sync
-  with what the answers actually show. 2.4:1 chosen over the spec's 2.2:1 floor for extra
-  margin, same "floor + explicit margin" pattern as SortScene's 1.5× `BIN_HIT_MULTIPLIER`
-  (spec floor 1.4×) in Slice 5.
-- **`correctStreak` resets on every QuizScene entry AND every resize-restart** (in `init()`,
-  unconditionally). A resize mid-streak losing progress toward the next 5th-round celebration is
-  a rare, harmless edge case (device rotation) — simplest option consistent with the rest of
-  this scene's state handling, not worth extra plumbing (e.g. threading an `isResize` flag
-  through init data just to preserve one counter) for something a toddler would never notice.
-- **QuizScene's answer-card layout was built defensively from the start, using the same
-  never-force-beyond-fit principle as the MenuScene fix, rather than needing its own reactive
-  bug fix.** `computeAnswerLayout()`'s candidate-column search takes `bestSize` as-is (no floor
-  clamp); at 390px phone width, a 3-answer counting round correctly wraps to 2 columns instead
-  of forcing an impossible single row, landing at ≈127px CSS cards (confirmed by measurement) —
-  under the 160px target but clearing the 120px floor, unlike the menu's 11-card case. Logged
-  via `console.info` if it ever doesn't (mirrors MenuScene's fix exactly).
-- **Menu card colors: counting `0x5c8fd6` (blue), bigsmall `0xe0a95c` (tan).** Not run through
-  the full pairwise collision matrix in exhaustive detail — both cards' art (a plain dot row;
-  two same-emoji glyphs at different scales) is silhouette-distinct from every existing card
-  type (colored blobs, shapes, single icons/emoji, the sort game's basket) by construction, so a
-  same-family color collision (the only kind the differentiation rule cares about) isn't a real
-  risk here the way it was between e.g. Slice 4's shapes/destinations or Slice 5's fruits/shapes.
-- **Verification tooling: Playwright installed via `npm install --no-save`, never touching
-  `package.json`.** Confirmed `git diff` on `package.json`/`package-lock.json` was clean after
-  `npm uninstall playwright` (one incidental `package-lock.json` lockfile-metadata diff was
-  reverted with `git checkout --`). Same "temporary, fully removed" discipline as the
-  `console.debug('[TEST] ...')` / `window.__game` instrumentation.
+- **Menu grid: fixed 2 columns, not a candidate-column search.** Slice 6's `[2, 3]` candidate
+  search existed *only* to trade columns for vertical fit when the grid couldn't scroll — cellH
+  was a hard constraint, and narrower-but-more columns sometimes cleared it when wider-but-fewer
+  ones didn't (that's literally why 11 cards landed on 3 columns at Slice 6). Now that the grid
+  scrolls, height is no longer a constraint at all, and cellW alone decides card size — which is
+  *provably* always larger with fewer columns: `cellW(2) − cellW(3) = (usableW + gap) / 6 > 0`
+  for any positive width/gap. 3 columns could never win the old comparison once cellH drops out
+  of it, so keeping the search around would just be dead logic that always resolves one way.
+  Replaced with a fixed 2-column grid instead.
+- **Scroll mechanism: direct per-card `container.y` updates, no wrapping Container.** The
+  obvious implementation wraps all cards in a single scrollable `Container` and moves *that*.
+  Rejected because `scripts/verify-audio-paths.ts`'s existing card-lookup logic (and the general
+  "read exact on-screen positions from scene state" pattern this project's tests all rely on)
+  assumes menu cards are direct children of the Scene's display list — nesting them one level
+  deeper would have silently broken that. Instead, `applyScroll()` just sets each card's own
+  `container.y` directly on every scroll-position change (cheap at 12 cards) — cards stay flat
+  scene children, tooling compatibility preserved for free.
+- **Hard-stop clamp, no rubber-band, no momentum.** `scrollY` is clamped to `[0, maxScroll]` on
+  *every* `pointermove`, so the grid can never be dragged past its bounds in the first place —
+  which also means no scissor mask is needed (a card can never render above the top clearance or
+  below the bottom margin, by construction). Spec explicitly offered either rubber-band or
+  hard-stop and called momentum unnecessary ("simple direct drag is fine and more predictable
+  for toddlers") — hard-stop is simpler to reason about and has zero tunable feel parameters.
+- **Tap-vs-scroll: Euclidean max-displacement over the whole gesture, resolved at
+  `pointerup`.** Movement is tracked as the maximum distance (not just vertical) from the
+  gesture's start point across its entire lifetime, not just the net displacement at release —
+  a toddler's finger can wobble sideways mid-scroll, and a naive "did it end near where it
+  started" check would misclassify a wobbly scroll as a tap. Because a tap can't be
+  distinguished from the start of a scroll until either the gesture ends or the threshold is
+  crossed, cards no longer wire their own `pointerdown` → instant-navigate handler (every prior
+  slice's pattern) — the actual navigate action now waits for `pointerup`. This means the
+  press/bounce visual feedback is delayed until release rather than starting on press; accepted
+  as the standard, simplest tap-vs-drag pattern rather than adding speculative "maybe-press"
+  visual state that would need to be reverted if the gesture turns into a scroll.
+- **Cards keep `setInteractive()` but no listener.** Purely so `scripts/verify-audio-paths.ts`'s
+  `.input`-filtering introspection still finds them (see file map) — MenuScene's own scene-level
+  pointer handlers drive all actual tap/scroll behavior; the object-level interactive state is
+  vestigial by design, not a leftover.
+- **Memory's input-lock race fix is synchronous state mutation at tap-*accept* time, not a
+  cooldown timer.** `handleCardTap()` sets `card.state = 'up'` and pushes onto `this.faceUp`
+  *before* starting the flip tween — both mutations happen in the same call stack as the tap
+  itself, so a second (or third) tap arriving even a single frame later already sees the updated
+  guard state, regardless of how far the first card's 250ms flip animation has actually
+  progressed. The tempting alternative — doing this bookkeeping inside the tween's
+  `onComplete` callback — is exactly the bug class the spec called out ("the classic memory-game
+  race bug"): two taps landing before either animation resolves would both read the pre-update
+  state and both slip through. Verified at the tightest possible margin (three zero-elapsed
+  synchronous calls to the handler in one JS tick) as well as with realistic rapid mouse clicks.
+- **Mismatch boop plays on flip-*back*, not on reveal.** Matches the spec's literal wording
+  ("then flip back to face-down... with the neutral boop") — `AudioManager.sfx('wrong')` is
+  called from inside `resolvePair()`'s 900ms-delayed callback, not synchronously when the
+  mismatch is first detected.
+- **Memory celebrates every round, not every-5th like QuizScene.** A memory round (2 pairs) is
+  its own complete board — the same granularity as MatchScene/SortScene's "full board →
+  celebrate," not QuizScene's every-5th-round rhythm (which exists specifically because one quiz
+  question is a much smaller unit than a full board). No new rhythm concept was introduced.
+- **`starPoints()` exported as a narrow exception to "duplicate scenes, don't share a base
+  class."** That precedent (home buttons, confetti helpers duplicated verbatim across every
+  gameplay scene) is about *scene behavior* staying independently editable. A ~10-line pure,
+  stateless trig formula used identically in two places is a different category of choice —
+  sharing it doesn't create the coupling the no-shared-base-class rule is protecting against.
+- **Memory identity color `0x8a7fd6` (soft lavender)**, chosen fresh (not reused from any
+  existing card) — its art (two fanned rectangular card-backs) is silhouette-distinct from
+  every other card type (circles/shapes/single icons/dots/emoji-pairs/basket) by construction,
+  so it wasn't run through the full pairwise color-collision matrix in exhaustive detail, same
+  reasoning Slice 6 used for the quiz cards.
+- **Icon generation: a hand-rolled PNG encoder over `zlib`, zero new dependencies.** See file
+  map entry for `scripts/generate-icons.ts`.
+- **No `vercel.json`.** This app has zero client-side routing (Phaser Scenes aren't URL routes —
+  there is exactly one HTML page), so there's nothing for a rewrite rule to do; Vercel's Vite
+  framework preset serves a static build (including the generated service worker and manifest)
+  correctly with no config. Adding a no-op file would be pure surface area for a "keep minimal"
+  instruction to cut against — documented here instead, per spec's own "if needed" phrasing.
+- **Service worker: `generateSW` strategy (vite-plugin-pwa's default) + `registerType:
+  'autoUpdate'`.** No custom `runtimeCaching` route was added for anything, voice files
+  included. This is what keeps a later-added file from ever being cache-poisoned: precaching
+  only lists files that existed at *build* time, and any other fetch (including today's
+  currently-missing voice mp3s) simply falls through to the network with no SW interception —
+  a 404 just 404s, nothing gets cached, and the next real build (once mp3s exist) picks them up
+  automatically via `globPatterns` including `mp3`. Verified directly: a dummy file dropped into
+  an already-built `dist/audio/voice/` was fetchable through the already-registered SW without
+  a rebuild (see "verification methodology").
+- **Chunk-size warning (`assets/index-*.js` ~1.25MB) is pre-existing, not a Slice 7
+  regression, and not addressed.** It's Phaser's own bundle size (a well-known large library),
+  unrelated to anything added this slice; code-splitting the scene architecture to chase Vite's
+  500KB default warning threshold would be a substantial, out-of-scope architectural change for
+  a deployment-prep task. `npm run build`'s actual success criterion — exits 0, no errors — is
+  met.
+- **Verification tooling: two temporary Playwright scripts written, run, then deleted** (same
+  discipline as every prior slice's ad-hoc instrumentation) — confirmed absent via `git status`
+  and a `grep -rn "tmp-verify" scripts/` returning nothing.
 
-### Voice-recording checklist (extended)
+### Voice-recording checklist (extended, now 17 lines)
 
 Record each line in Indonesian, export as mp3, drop into `public/audio/voice/` using the exact
 filename below — no code change needed either way.
@@ -312,6 +326,7 @@ filename below — no code change needed either way.
 | `theme_vehicles_intro` | `theme_vehicles_intro.mp3` | "Ayo cari kendaraannya!" | Entering the **vehicles** theme from the menu |
 | `theme_fruits_intro` | `theme_fruits_intro.mp3` | "Ayo cari buahnya!" | Entering the **fruits** theme from the menu |
 | `game_fruitsort_intro` | `game_fruitsort_intro.mp3` | "Ayo pilah buahnya!" | Entering the **fruit sorting** game from the menu |
+| `game_memory_intro` | `game_memory_intro.mp3` | "Di mana kembarannya?" | Entering the **memory** game from the menu |
 | `quiz_counting_intro` | `quiz_counting_intro.mp3` | "Ayo hitung! Ada berapa?" | Each round of the **counting** quiz starts |
 | `quiz_big_intro` | `quiz_big_intro.mp3` | "Mana yang besar?" | A **big/small** quiz round asks for "big" |
 | `quiz_small_intro` | `quiz_small_intro.mp3` | "Mana yang kecil?" | A **big/small** quiz round asks for "small" |
@@ -320,196 +335,55 @@ filename below — no code change needed either way.
 | `praise_3` | `praise_3.mp3` | "Yeay!" | Random pick on full-board celebration |
 | `praise_4` | `praise_4.mp3` | "Bagus sekali!" | Random pick on full-board celebration |
 
-Each theme/sort-game intro line fires once per menu→entry visit (unchanged). The two quiz intro
-lines are the one exception in this manifest: they fire once per **round**, not once per entry
-(a fresh counting round or a fresh big/small target each need their own narration) — see
-decisions above for why this isn't a static per-game id lookup like the others. Praise lines are
-picked uniformly at random, one per celebration, alongside the fanfare SFX (which always plays).
-**Big/small is playable with zero voice files recorded** (today's real state, verified this
-slice) via its dashed-outline visual cue — recording `quiz_big_intro`/`quiz_small_intro` is not
-a blocker for shipping the game, only for the narrated experience.
+`game_memory_intro` follows the same once-per-entry rule as `game_fruitsort_intro`/the theme
+intros (fires on menu → scene entry, not on resize-restart, not per-round). Still **zero real
+mp3s** shipped across all 17 manifest entries (`public/audio/voice/` still ships only a
+`.gitkeep`) — every game remains fully playable without narration, verified again this slice
+including in the production build specifically.
 
-### Notes for Slice 7
-- **Likely scope per this slice's DoD: memory flip + deployment prep.** Nothing built yet.
-  Deployment-prep flag: this slice adds no new external dependencies, no server-side code, no
-  new build-time asset pipeline (emoji/Graphics only, same as every prior slice) — nothing here
-  should complicate a Vercel static deploy. The one thing worth a deploy-prep sanity check:
-  `public/audio/voice/` currently ships with only a `.gitkeep` (zero real mp3s across all 15
-  entries in the manifest) — confirm the static build doesn't choke on the missing directory
-  contents (it shouldn't, `fetch()` 404s are handled gracefully) before relying on that in prod.
-- **Menu is now at 11 entries, and phone-width cards are measured at ~106.7px CSS — already
-  under the 120px touch-target floor, not just close to it.** If Slice 7 (or any future slice)
-  adds a 12th entry, do NOT expect `computeGrid()`'s adaptive column search to rescue it further
-  — 3 columns is already the best fit at 11, and going to 4 only shrinks cards more. The real
-  fix at that point is scrolling (biggest, most correct, and was explicitly out of scope for
-  this slice) or accepting a shrinking floor is no longer viable and redesigning the menu
-  (e.g. category tabs). Don't just bump `GRID_COLUMN_CANDIDATES` and hope.
-- **The counting-prompt cluster-overlap bug (see status notes above) is the second slice in a
-  row where a scatter/placement algorithm's first cut silently overlapped at the extremes of its
-  count range, caught only by reading a screenshot.** If a future slice adds another "N
-  scattered items" mechanic, budget for a phone-width, max-count screenshot check specifically —
-  property/assertion checks on the underlying data have proven blind to this entire bug class
-  twice now (SortScene Slice 5, QuizScene this slice).
-- **Voice preload race** (carried from Slice 4, still unaddressed): once real mp3s exist for any
-  of the 15 manifest entries, spot-check whether the very first theme/game/quiz-round entered in
-  a fresh session reliably plays its intro line, or whether the fetch/decode occasionally loses
-  the race against the scene's `create()`. Now slightly more load-bearing than before: big/small
-  actively *changes behavior* (shows the dashed cue) when a voice line hasn't resolved yet, so a
-  slow preload on a fresh session could show the cue briefly even once real mp3s are recorded —
-  harmless (redundant, not wrong) but worth knowing about.
-- **`correctStreak` resets on resize** (QuizScene, see decisions) — unchanged/accepted, revisit
-  only if it becomes user-noticeable.
-- **`SHAPE_CROSS_COLOR_MODE`** (`renderers.ts`), **`initiateFrom: 'either'`** (`MatchScene.ts`),
-  and now **a digits-mode for counting** (explicitly out of scope this slice, same
-  unimplemented-seed pattern) are all still-unimplemented seeds for a future difficulty/age-mode
-  toggle.
-- Menu still shows all entries unconditionally with no progress/lock state; mute state still
-  resets to unmuted (audio ON) every load (no persistence) — both unchanged, matches this
-  slice's scope. (Rephrased from "resets to ON" — ambiguous wording that could misread as
-  "resets to muted"; `AudioManagerImpl.muted` defaults to `false`, confirmed again during the
-  audio-bug investigation below.)
-- `AudioManager` remains a plain module-level singleton (now shared across 4 scenes instead of
-  3) — still fine at this scale; revisit only if a non-scene context (e.g. a future parent gate)
-  needs audio.
-
----
-
-## Post-Slice-6 investigation: "all game audio has stopped working" (user report)
-
-**Conclusion: no reproducible code-level regression found.** Extensive testing (below) shows
-every audio call path — menu click, select, correct match, wrong match, celebration, sort
-pickup, sort correct-drop, quiz correct, quiz wrong — fires exactly the expected WebAudio calls,
-byte-identical to the last-known-good Slice 5 commit (`4eb9f62`), in both the dev server and a
-production (`vite build` + `vite preview`) build, under both mouse-click and real-touch-tap
-event simulation. A permanent regression guard (`scripts/verify-audio-paths.ts`, see below) now
-asserts this automatically; it currently passes with zero failures.
-
-### What was checked (Step 1 — reproduce & characterize)
-Since this sandbox has no real speaker output, "does it play" was verified via the closest
-faithful proxy: wrapping the real `AudioContext`/`OscillatorNode`/`AudioBufferSourceNode` with a
-Playwright `addInitScript` (injected before any app code runs — zero source changes needed for
-the wrapping itself) that logs every `.start()` call and every `statechange`/`resume()`. This
-answers "did the exact WebAudio call that produces sound actually fire" as precisely as
-headless testing can, short of literally listening.
-- **(a) Does any sound play?** Every checked interaction produced the expected oscillator
-  `.start()` count (see the regression script's asserted values). No path was silently skipped.
-- **(b) Console errors?** None, across every run (dev, prod, mouse, touch). The one recurring
-  `console.info` (`16/16 voice line(s) not found`) is the long-documented, expected zero-mp3s
-  state (HANDOFF Slice 4/5/6), not an error.
-- **(c) AudioContext state.** Constructed `suspended` at boot (Phaser's own internal context —
-  logged separately from `AudioManager`'s own context, see below), transitions to `running`
-  within the same synthetic gesture that calls `AudioManager.unlock()`. `AudioManager`'s own
-  context is frequently already `running` at construction time in this sandbox's Chromium
-  (constructed mid-gesture, after the "requires a user gesture" bar is already cleared) — this
-  is a Chromium/headless nuance, not a bug; either way `resume()`'s promise always resolves to
-  `running`.
-- **(d) Mute flag at boot.** `AudioManagerImpl.muted` is a private field defaulting to `false`
-  (unmuted); confirmed both by reading the code and by screenshot (the mute button renders the
-  unmuted speaker-with-sound-waves icon on a fresh load, never the muted/strikethrough icon).
-  No persistence (`localStorage`/`sessionStorage`) reads or writes exist anywhere in
-  `AudioManager.ts` — the flag cannot carry over from a prior session.
-
-### Bisection (Step 2)
-Diffed `4eb9f62` (Slice 5, last confirmed working) against `HEAD` for every file touching audio:
-`src/audio/AudioManager.ts` (additive only — the `hasVoice()` query method, see Slice 6 file
-map), `src/main.ts` (additive only — `QuizScene` import/registration; the capture-phase
-`unlock()` listener and Phaser game config are untouched), `src/scenes/MenuScene.ts`'s mute
-button code (untouched). `index.html` and `src/style.css` have **zero diff** across the whole
-range. Given the diff alone showed nothing suspicious, ran the *identical* click/select/correct/
-celebrate diagnostic against an isolated `git worktree` checkout of `4eb9f62` (separate port,
-separate `node_modules`) and compared oscillator counts head-to-head with current `HEAD`:
-every single count matched exactly (1 / 1 / 3 / 12 for menu-click / select / correct / celebrate,
-respectively, in both). There is no commit in the `ec68ad0`..`HEAD` range that changes this
-behavior — the two Slice 6 commits and the fruit-sort data fix were all correctly ruled out as
-suspects.
-
-### Suspect-area checklist (all ruled out)
-- **Resume-on-first-gesture wiring.** Still a single global capture-phase `document`
-  `'pointerdown'` listener in `main.ts`, unchanged since Slice 4 — never per-scene, so QuizScene
-  needed (and required) zero changes to this wiring, and got none.
-- **Slice 6 test-instrumentation cleanup.** Re-read both cleanup diffs
-  (`console.debug('[TEST] ...')` removal, `window.__game` removal) commit-by-commit — nothing
-  audio-adjacent was touched; only diagnostic-only additions from that same session were removed.
-- **Mute-state handling.** Not persisted, not inverted — see 1(d) above.
-- **Autoplay policy / required-before-gesture sounds.** No sound is ever scheduled before
-  `unlock()`'s gesture-triggered `AudioContext` construction; `sfx()`/`voice()` both guard on
-  `!this.ctx` and no-op if called too early (they aren't, in practice — every scene's first
-  possible sound-triggering tap is itself the unlocking gesture).
-
-### Fix applied (Step 3)
-**None — no root cause to fix.** Since the instructions were explicit not to jump to a fix, and
-none of the above investigation surfaced a genuine defect, no source change was made to
-`AudioManager.ts`, `main.ts`, or any scene's audio-triggering code. (One cosmetic HANDOFF wording
-fix was made — the ambiguous "resets to ON" mute-state note above — since it could itself mislead
-a future audio investigation.)
-
-**What's likely actually happening**, given a real user reported real silence with a codebase
-that cannot be made to reproduce that silence under any tested condition: something *outside*
-this codebase's control. In descending order of likelihood for "previously worked, now silent,
-zero errors, unfixable by re-reading the code":
-1. **Browser or OS-level mute** — most browsers mute *per-tab* independent of in-page JS (a click
-   on the tab's own speaker icon, or Chrome's site-level Settings → Sound → "Don't allow sites to
-   play sound" applied to this origin). This produces exactly the reported symptom: WebAudio
-   calls all succeed, nothing throws, nothing is audible.
-2. **System/device output** — physical mute switch, system volume, or Bluetooth/AirPlay routing
-   silently switched output to a different (silent or absent) device mid-session.
-3. **A specific real device/browser this wasn't tested on** — this investigation covered Chromium
-   (dev + prod build, mouse + touch-emulated). If the user's device is Safari/iOS specifically,
-   that's the one major WebAudio-unlock implementation this investigation did NOT get to test
-   against a real engine (Playwright's WebKit exists but wasn't in this pass) — worth a targeted
-   follow-up if the browser/OS-mute explanations don't pan out.
-**Recommendation:** before further code archaeology, check the browser tab's own mute state and
-the site's sound permission in browser settings on the affected device.
-
-### Regression guard (Step 3, hardening)
-New: `scripts/verify-audio-paths.ts`, run via `npm run verify:audio`. Self-contained — spawns its
-own `vite` dev server on an ephemeral port and tears it down afterward, so it needs no manual
-setup beyond `npx playwright install chromium` once (Playwright + `tsx` are now real
-`devDependencies`, not the ad-hoc `--no-save` installs prior slices used for one-off
-verification — this script is meant to be run repeatedly, so it had to persist).
-Wraps the real `AudioContext` (same technique as the investigation above) and asserts the exact
-oscillator-start count for all 9 requested checkpoints: menu card tap (1), match select (1),
-match wrong (1), match correct (3), full-round celebration (12), sort drag pickup (1), sort
-correct-bin drop (4 — plop + chime together), quiz wrong (1), quiz correct (3). Validated the
-guard has teeth before trusting it: temporarily forced `sfx()` to no-op
-(`if (this.muted || !this.ctx || true) return;`), re-ran the script, confirmed all 9 checkpoints
-failed with clear "expected N, got 0" messages, then reverted (confirmed via `git diff` showing
-zero residual change). Requires `src/main.ts`'s new `window.__game` hook (see below) to read
-exact on-screen positions for precise taps — without it, the script would need to duplicate
-every scene's layout math independently, which would silently drift out of sync with real
-layout changes exactly the way a hardcoded-percentage click coordinate did during this
-investigation's first (failed) diagnostic attempt.
-
-**New permanent (not temporary-then-removed) file map entries:**
-- `src/main.ts` — added a `window.__game` exposure gated behind `if (import.meta.env.DEV)`.
-  Vite statically replaces `import.meta.env.DEV` with `false` in production builds, so this
-  whole block is dead-code-eliminated from `dist/` — confirmed by grepping the built bundle for
-  `__game` (zero matches) after a real `vite build`. Unlike every prior slice's temporary
-  `window.__game`/`console.debug('[TEST] ...')` instrumentation (added for one verification pass,
-  then deleted), this one is meant to stay, because `scripts/verify-audio-paths.ts` now depends
-  on it permanently.
-- `scripts/verify-audio-paths.ts` — new, see above.
-- `package.json` — added `"verify:audio"` script; `playwright` and `tsx` moved from prior
-  slices' ad-hoc `npm install --no-save` (used once per verification pass, then uninstalled) to
-  real, persisted `devDependencies`, since this regression guard needs to be re-runnable by
-  anyone (or CI) without reconstructing tooling each time.
-
-### Verification summary (Step 3, "verify audibly")
-This sandbox has no speaker output, so "audibly" was approximated as rigorously as possible via
-the WebAudio-call-path proxy described above — flagged here explicitly rather than silently
-claimed as a literal listening pass (same "pending a human" caveat prior slices used for SFX
-audible *quality*, e.g. Slice 4/5's synthesized-tone review). Per-hook results, all confirmed
-firing with the correct call shape:
-- Menu → card tap: 1 oscillator (`click`).
-- Matching theme → select: 1 oscillator (`select`); wrong: 1 oscillator (`wrong`); correct: 3
-  oscillators (`correct` chime triad); full round → celebration: 12 oscillators (`celebrate`
-  fanfare, 6 notes × 2 layers).
-- Fruit sort → drag pickup: 1 oscillator (`pickup`); correct-bin drop: 4 oscillators (`plop` +
-  `correct` chime, played together per SortScene's `settleIntoBin`).
-- Both quiz games (counting AND big/small explicitly, not just one) → correct: 3 oscillators;
-  wrong: 1 oscillator — identical call shape in both games, as expected (same
-  `AudioManager.sfx()` call sites in `QuizScene`, game-agnostic).
-**Recommend a real human listening pass** (on the actual device where silence was reported, with
-particular attention to the tab/site mute state per the recommendation above) before considering
-this fully closed — headless WebAudio-call verification proves the code is doing what it should;
-it can't prove a human would hear it on a specific misconfigured device.
+### Notes for Slice 8
+- **Patterns game looks cheaper than an age-mode selector, given the current architecture —
+  recommend it first.** A patterns/sequencing mechanic ("what comes next") is structurally just
+  another `QuizScene`-shaped addition: a new game-data file + a `MenuEntry` variant + a menu-card
+  branch + a voice key, the exact recipe SortScene, QuizScene, and now MemoryScene have each
+  followed with zero changes to `MenuScene`/other scenes' core mechanics. An age-mode selector,
+  by contrast, needs *persistence* (currently there is none anywhere in this app — mute state
+  resets to unmuted every load, nothing survives a reload) plus new settings UI plus wiring
+  through several already-seeded-but-unbuilt toggle points simultaneously
+  (`SHAPE_CROSS_COLOR_MODE`, `initiateFrom: 'either'`, a counting digits-only mode) — a bigger,
+  cross-cutting feature than a single new game.
+- **The 13th+ menu entry is no longer a geometric concern.** Slice 6 flagged the 11→12 card
+  jump as hitting a hard wall (120px floor already violated). Scrolling resolves this
+  generically, by construction (`maxScroll = Math.max(0, gridH - usableH)` — never a special
+  case), not just for exactly 12 cards. No further menu work should be needed when a 13th entry
+  (e.g. a patterns game) is added.
+- **Neither tested viewport (390×844 phone, 768×1024 tablet) naturally hit the "fits without
+  scrolling" case at 12 entries** — both scroll (`maxScroll` ≈350css px phone, ≈620css px
+  tablet). The degrade-to-static code path is nonetheless verified correct *by construction*
+  (the `Math.max(0, ...)` floor on `maxScroll`, and the tap/visibility math both being
+  scroll-amount-agnostic), not merely by having sampled a viewport where it happens to trigger —
+  worth a real check on an actual wide-tablet device if one becomes available, but not a gap in
+  the reasoning as it stands.
+- **Persistence is still entirely absent** (mute state, any future progress/settings) — flagged
+  again because a PWA install specifically implies *repeat* visits, where a mute preference
+  reset on every single load is more noticeable than it was as a plain web page. Worth
+  considering for a future slice; not implemented here (out of scope: "persistence beyond PWA
+  caching").
+- **Voice preload race** (carried since Slice 4, still unaddressed): once real mp3s exist for
+  any of the 17 manifest entries, spot-check whether the very first theme/game/quiz-round/memory
+  round entered in a fresh session reliably plays its intro line. Still most load-bearing for
+  big/small's visual-cue fallback (QuizScene), unchanged this slice.
+- **Post-Slice-6 "audio has stopped working" investigation: resolved as no reproducible code
+  regression** (full investigation write-up was in this file before this consolidation — see
+  git history at commit `eb9d18b` for the complete methodology if it's ever needed again). The
+  permanent regression guard it produced (`scripts/verify-audio-paths.ts`, `npm run
+  verify:audio`) is still in place and now additionally covers MemoryScene's sound paths. If
+  silence is reported again: check the browser tab's own mute state and the site's sound
+  permission first (the leading hypothesis); Safari/iOS was the one major engine that
+  investigation never got to test against a real (non-Playwright-WebKit) device.
+- **`correctStreak` resets on resize** (QuizScene) — unchanged/accepted, still not
+  user-noticeable.
+- Menu still shows all entries unconditionally with no progress/lock state — unchanged, matches
+  every slice's scope so far.
+- `AudioManager` remains a plain module-level singleton (now shared across 5 scenes instead of
+  4) — still fine at this scale.

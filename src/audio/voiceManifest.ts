@@ -12,6 +12,7 @@ export type VoiceKey =
   | 'theme_vehicles_intro'
   | 'theme_fruits_intro'
   | 'game_fruitsort_intro'
+  | 'game_memory_intro'
   | 'quiz_counting_intro'
   | 'quiz_big_intro'
   | 'quiz_small_intro'
@@ -38,6 +39,7 @@ export const VOICE_MANIFEST: Record<VoiceKey, VoiceLine> = {
   theme_vehicles_intro: { file: 'theme_vehicles_intro.mp3', text: 'Ayo cari kendaraannya!' },
   theme_fruits_intro: { file: 'theme_fruits_intro.mp3', text: 'Ayo cari buahnya!' },
   game_fruitsort_intro: { file: 'game_fruitsort_intro.mp3', text: 'Ayo pilah buahnya!' },
+  game_memory_intro: { file: 'game_memory_intro.mp3', text: 'Di mana kembarannya?' },
   quiz_counting_intro: { file: 'quiz_counting_intro.mp3', text: 'Ayo hitung! Ada berapa?' },
   quiz_big_intro: { file: 'quiz_big_intro.mp3', text: 'Mana yang besar?' },
   quiz_small_intro: { file: 'quiz_small_intro.mp3', text: 'Mana yang kecil?' },
@@ -64,6 +66,12 @@ export const THEME_INTRO_VOICE: Record<string, VoiceKey> = {
 // — SortScene looks this up once per menu -> game entry, same as MatchScene.
 export const SORT_GAME_INTRO_VOICE: Record<string, VoiceKey> = {
   fruitsort: 'game_fruitsort_intro',
+};
+
+// Same idea again but keyed by MemoryGame.id (src/data/memoryGames.ts) —
+// MemoryScene looks this up once per menu -> game entry, same as SortScene.
+export const MEMORY_GAME_INTRO_VOICE: Record<string, VoiceKey> = {
+  memory: 'game_memory_intro',
 };
 
 export const PRAISE_VOICE_KEYS: VoiceKey[] = ['praise_1', 'praise_2', 'praise_3', 'praise_4'];

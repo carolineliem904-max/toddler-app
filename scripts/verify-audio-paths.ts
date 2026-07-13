@@ -131,17 +131,27 @@ async function main(): Promise<void> {
     await waitForScene(page, 'MenuScene');
     await page.waitForTimeout(500);
 
-    const getMenuBoxes = async () =>
-      page.evaluate(() => {
+    // Slice 7: the menu now scrolls (12 cards), so a card at a given
+    // MENU_ENTRIES index may render below the fold at scrollY=0 — center it
+    // in the viewport first (clamped to the valid scroll range; a no-op when
+    // the whole grid already fits) before reading its on-screen position.
+    const menuCardPos = async (index: number) =>
+      page.evaluate((idx) => {
         const g = (window as any).__game;
         const scene = g.scene.getScene('MenuScene');
-        return scene.children.list.filter((c: any) => c.type === 'Container' && c.input).map((c: any) => ({ x: c.x, y: c.y }));
-      });
+        const meta = scene.cardsMeta[idx];
+        const dpr = window.devicePixelRatio || 1;
+        const cssH = scene.scale.height / dpr;
+        const desired = meta.baseY - cssH / 2;
+        scene.scrollY = Math.max(0, Math.min(scene.maxScroll, desired));
+        scene.applyScroll();
+        return { x: meta.container.x, y: meta.container.y };
+      }, index);
 
     console.log('=== Menu: click ===');
-    let boxes = await getMenuBoxes();
+    let pos = await menuCardPos(0);
     await readAndClearLog(page);
-    await click(page, boxes[0]!.x, boxes[0]!.y); // first match theme
+    await click(page, pos.x, pos.y); // first match theme
     await waitForScene(page, 'MatchScene');
     await page.waitForTimeout(300);
     assertCount('menu card tap -> click sfx', 1, await readAndClearLog(page));
@@ -202,8 +212,8 @@ async function main(): Promise<void> {
     await click(page, homeBtn1.x, homeBtn1.y);
     await waitForScene(page, 'MenuScene');
     await page.waitForTimeout(300);
-    boxes = await getMenuBoxes();
-    await click(page, boxes[8]!.x, boxes[8]!.y); // fruit sort entry
+    pos = await menuCardPos(8);
+    await click(page, pos.x, pos.y); // fruit sort entry
     await waitForScene(page, 'SortScene');
     await page.waitForTimeout(400);
 
@@ -237,8 +247,8 @@ async function main(): Promise<void> {
     await click(page, homeBtn2.x, homeBtn2.y);
     await waitForScene(page, 'MenuScene');
     await page.waitForTimeout(300);
-    boxes = await getMenuBoxes();
-    await click(page, boxes[9]!.x, boxes[9]!.y); // counting quiz entry
+    pos = await menuCardPos(9);
+    await click(page, pos.x, pos.y); // counting quiz entry
     await waitForScene(page, 'QuizScene');
     await page.waitForTimeout(400);
 
@@ -260,6 +270,85 @@ async function main(): Promise<void> {
     await click(page, correctCard.x, correctCard.y);
     await page.waitForTimeout(300);
     assertCount('quiz correct answer -> correct sfx (chime)', 3, await readAndClearLog(page));
+
+    console.log('\n=== Home -> Memory: flip, correct (match), wrong (mismatch), celebrate ===');
+    const homeBtn3 = await page.evaluate(() => {
+      const g = (window as any).__game;
+      const scene = g.scene.getScene('QuizScene');
+      return { x: scene.homeButton.x, y: scene.homeButton.y };
+    });
+    await click(page, homeBtn3.x, homeBtn3.y);
+    await waitForScene(page, 'MenuScene');
+    await page.waitForTimeout(300);
+    pos = await menuCardPos(11);
+    await click(page, pos.x, pos.y); // memory entry (12th card)
+    await waitForScene(page, 'MemoryScene');
+    await page.waitForTimeout(400);
+
+    const getMemoryCards = async () =>
+      page.evaluate(() => {
+        const g = (window as any).__game;
+        const scene = g.scene.getScene('MemoryScene');
+        return scene.cards.map((c: any, i: number) => ({ i, emoji: c.emoji, x: c.container.x, y: c.container.y }));
+      });
+
+    // Round layout is randomized (shuffled deck of 2 pairs), so partners are
+    // looked up from live scene state rather than assumed by index — same
+    // dynamic-lookup approach this script already uses for QuizScene's
+    // wrong/correct answer cards above.
+    let memCards = await getMemoryCards();
+    const mismatchIdx = memCards.findIndex((c: any) => c.i !== 0 && c.emoji !== memCards[0]!.emoji);
+
+    await readAndClearLog(page);
+    await click(page, memCards[0]!.x, memCards[0]!.y);
+    await page.waitForTimeout(80);
+    assertCount('memory: flip 1st card -> select sfx (pop)', 1, await readAndClearLog(page));
+
+    await click(page, memCards[mismatchIdx]!.x, memCards[mismatchIdx]!.y);
+    await page.waitForTimeout(80);
+    assertCount('memory: flip 2nd (mismatching) card -> select sfx (pop)', 1, await readAndClearLog(page));
+    // Resolution fires FLIP_HALF_MS*2 (250ms) after the 2nd tap, then a
+    // mismatch waits MISMATCH_LOOK_MS (900ms) before the boop + flip-back —
+    // see MemoryScene.resolvePair. Total ~1150ms.
+    await page.waitForTimeout(1300);
+    assertCount('memory: mismatch reveal -> wrong sfx (boop) on flip-back', 1, await readAndClearLog(page));
+
+    // Both mismatched cards are face-down again; re-derive the real pair
+    // partner for card 0 to drive a genuine match.
+    memCards = await getMemoryCards();
+    const matchIdx = memCards.findIndex((c: any) => c.i !== 0 && c.emoji === memCards[0]!.emoji);
+
+    await readAndClearLog(page);
+    await click(page, memCards[0]!.x, memCards[0]!.y);
+    await page.waitForTimeout(80);
+    assertCount('memory: flip 1st card (retry) -> select sfx (pop)', 1, await readAndClearLog(page));
+
+    await click(page, memCards[matchIdx]!.x, memCards[matchIdx]!.y);
+    await page.waitForTimeout(80);
+    assertCount('memory: flip 2nd (matching) card -> select sfx (pop)', 1, await readAndClearLog(page));
+    await page.waitForTimeout(300);
+    assertCount('memory: match resolved -> correct sfx (chime)', 3, await readAndClearLog(page));
+
+    // Match the remaining (guaranteed, by construction — exactly 2 pairs
+    // exist in a 4-card round) pair to complete the board and trigger the
+    // full celebration.
+    const remaining = memCards.filter((c: any) => c.i !== 0 && c.i !== matchIdx);
+    await readAndClearLog(page);
+    await click(page, remaining[0]!.x, remaining[0]!.y);
+    await page.waitForTimeout(80);
+    assertCount('memory: flip 1st card of 2nd pair -> select sfx (pop)', 1, await readAndClearLog(page));
+
+    await click(page, remaining[1]!.x, remaining[1]!.y);
+    await page.waitForTimeout(80);
+    assertCount('memory: flip 2nd card of 2nd pair -> select sfx (pop)', 1, await readAndClearLog(page));
+    await page.waitForTimeout(300);
+    assertCount('memory: 2nd pair resolved -> correct sfx (chime)', 3, await readAndClearLog(page));
+
+    // celebrate() fires 500ms after resolvePair's match handling (matchedPairs
+    // reaches TOTAL_PAIRS) — see MemoryScene.resolvePair/celebrate.
+    await page.waitForTimeout(400);
+    assertCount('memory: full board -> celebrate sfx (fanfare)', 12, await readAndClearLog(page));
+    await page.waitForTimeout(2200); // let celebration/round-restart settle before navigating away
 
     if (pageErrors.length > 0) {
       failures += pageErrors.length;
