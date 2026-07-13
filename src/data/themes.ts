@@ -2,16 +2,22 @@ import { PALETTE } from './palette';
 import type { IconKind } from '../rendering/icons';
 
 export type ShapeKind = 'circle' | 'square' | 'triangle' | 'star' | 'heart' | 'diamond';
-export type RendererKind = 'colorBlob' | 'shape' | 'shadow' | 'object' | 'destination' | 'emoji';
+export type RendererKind = 'colorBlob' | 'shape' | 'shadow' | 'destination' | 'emoji';
 
 export interface PairDef {
   id: string;
   color?: number; // colors theme: the pair's identity color; emoji themes: an identity color for the connecting line/confetti/card tint only (the glyph itself isn't recolored)
   shape?: ShapeKind; // shapes/shadows themes: the pair's identity shape
-  icon?: IconKind; // objects theme: the pair's identity icon (same both sides)
-  leftIcon?: IconKind; // destinations theme: the object-side icon
-  rightIcon?: IconKind; // destinations theme: the destination-side icon
-  emoji?: string; // animals/vehicles/fruits themes: the pair's glyph, identical both sides
+  // destinations theme: post-toddler-QA icon migration (see HANDOFF) moved
+  // every pair to leftEmoji/rightEmoji, EXCEPT the one intentionally-kept
+  // hybrid pair (fish-bowl) whose destination (right) side still uses this
+  // drawn icon — the bowl was never the confusing part, and 🐟+🌊 would
+  // collide with boat-water's water glyph. There's no left-side icon path
+  // anymore (every pair's object/left side is emoji, no exceptions).
+  rightIcon?: IconKind; // destinations theme (fish-bowl hybrid pair only): the destination-side icon
+  emoji?: string; // objects/animals/vehicles/fruits themes: the pair's glyph, identical both sides
+  leftEmoji?: string; // destinations theme: the object-side glyph
+  rightEmoji?: string; // destinations theme: the destination-side glyph
 }
 
 export interface Theme {
@@ -39,22 +45,44 @@ const SHAPE_POOL: PairDef[] = [
   { id: 'diamond', shape: 'diamond' },
 ];
 
+// Post-toddler-QA icon migration (see HANDOFF): the Slice 3 hand-drawn
+// Graphics icons weren't recognizable enough for a 2yo, so objects moved to
+// the identical-match `emoji` renderer (Slice 5), same as animals/vehicles/
+// fruits — a mixed-bag pool, so overlap with those other themes' pools is
+// fine (this theme's identity IS "assorted things," not a curated category).
 const OBJECT_POOL: PairDef[] = [
-  { id: 'apple', icon: 'apple' },
-  { id: 'ball', icon: 'ball' },
-  { id: 'cup', icon: 'cup' },
-  { id: 'fish', icon: 'fish' },
-  { id: 'flower', icon: 'flower' },
-  { id: 'car', icon: 'car' },
+  { id: 'apple', emoji: '🍎', color: 0xe0483c },
+  { id: 'ball', emoji: '⚽', color: 0x333333 },
+  { id: 'flower', emoji: '🌸', color: 0xff6fa5 },
+  { id: 'fish', emoji: '🐟', color: 0xff9f45 },
+  { id: 'car', emoji: '🚗', color: 0x2b6fd4 },
+  { id: 'chick', emoji: '🐤', color: 0xffd500 },
 ];
 
+// Post-toddler-QA icon migration (see HANDOFF): QA showed confusion on this
+// theme especially. Now emoji both sides wherever possible — `color` here is
+// the object (left) side's traditional identity color (continuity with the
+// pre-migration hand-drawn palette in icons.ts's ICON_COLORS), used only for
+// the connecting-line/confetti/card tint, same convention as the plain
+// `emoji` renderer's pools.
+// `fish-bowl` is the one deliberately-kept hybrid pair: 🐟→🌊 would collide
+// with `boat-water`'s water glyph (two different pairs both landing on the
+// same destination emoji is a real ambiguity, not just a style nit), and the
+// bowl was never the part QA found confusing — so it keeps the Slice 3 drawn
+// icon (rightIcon: 'bowl') while its object side still moves to 🐟 for
+// consistency with the objects theme's own fish. `bird-nest`'s 🪹 (nest,
+// Unicode 14.0) was verified to render as a real glyph (not a tofu box) via
+// a headless Chromium screenshot before committing to it — no drawn-icon
+// fallback was needed. Kept as `fish-bowl` first in this array specifically
+// so it stays MenuScene's default destinations card (CARD_ICON_OVERRIDE's
+// `{ role: 'right' }` picks `pairs[0]` — see MenuScene decisions).
 const DESTINATION_POOL: PairDef[] = [
-  { id: 'fish-bowl', leftIcon: 'fish', rightIcon: 'bowl' },
-  { id: 'car-road', leftIcon: 'car', rightIcon: 'road' },
-  { id: 'bird-nest', leftIcon: 'bird', rightIcon: 'nest' },
-  { id: 'bee-flower', leftIcon: 'bee', rightIcon: 'flower' },
-  { id: 'boat-water', leftIcon: 'boat', rightIcon: 'water' },
-  { id: 'ball-basket', leftIcon: 'ball', rightIcon: 'basket' },
+  { id: 'fish-bowl', leftEmoji: '🐟', rightIcon: 'bowl', color: 0xff9f45 },
+  { id: 'bird-nest', leftEmoji: '🐦', rightEmoji: '🪹', color: 0x4aa3ff },
+  { id: 'bee-flower', leftEmoji: '🐝', rightEmoji: '🌸', color: 0xffd500 },
+  { id: 'ball-basket', leftEmoji: '⚽', rightEmoji: '🧺', color: 0xff9500 },
+  { id: 'car-home', leftEmoji: '🚗', rightEmoji: '🏠', color: 0xe0483c },
+  { id: 'boat-water', leftEmoji: '⛵', rightEmoji: '🌊', color: 0xa9744f },
 ];
 
 // Identical-match emoji themes (Slice 5 Part B): both sides show the same
@@ -103,7 +131,7 @@ export const THEMES: Theme[] = [
   { id: 'colors', renderer: 'colorBlob', pairs: COLOR_POOL, pairsPerRound: 4 },
   { id: 'shapes', renderer: 'shape', pairs: SHAPE_POOL, pairsPerRound: 4 },
   { id: 'shadows', renderer: 'shadow', pairs: SHAPE_POOL, pairsPerRound: 3 },
-  { id: 'objects', renderer: 'object', pairs: OBJECT_POOL, pairsPerRound: 4 },
+  { id: 'objects', renderer: 'emoji', pairs: OBJECT_POOL, pairsPerRound: 4 },
   { id: 'destinations', renderer: 'destination', pairs: DESTINATION_POOL, pairsPerRound: 3 },
   { id: 'animals', renderer: 'emoji', pairs: ANIMAL_POOL, pairsPerRound: 4 },
   { id: 'vehicles', renderer: 'emoji', pairs: VEHICLE_POOL, pairsPerRound: 4 },

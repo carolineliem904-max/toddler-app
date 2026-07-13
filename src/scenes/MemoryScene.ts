@@ -32,24 +32,34 @@ const BACKGROUND_COLOR = 0xfff8ee;
 const HOME_BUTTON_SIZE_PX = 80;
 const TOP_MARGIN_PX = EDGE_MARGIN_PX + HOME_BUTTON_SIZE_PX + 16;
 
-// Fixed 2x2 / 2-pair board — spec, verbatim: "2-3yo memory is SHORT... this
-// is the intro version. A bigger grid is a future age-mode." No candidate-
-// column search like MenuScene/QuizScene need: the shape never varies.
+// Post-toddler-QA difficulty progression (see HANDOFF): 2 pairs is now
+// mastered, so a round-by-round sequence within the session: start at
+// MIN_PAIRS, +1 pair per completed round, capped at MAX_PAIRS. Columns stay
+// fixed at 2 (same "no candidate-column search needed" reasoning as before —
+// only the row count varies, rows = current pair count since cards =
+// pairCount * 2 and cols is always 2).
 const GRID_COLS = 2;
-const GRID_ROWS = 2;
-const TOTAL_PAIRS = 2;
+const MIN_PAIRS = 2;
+const MAX_PAIRS = 4;
 const CARD_GAP_PX = 20;
 const CARD_MAX_PX = 220;
 // CLAUDE.md's true, never-violated touch-target minimum — logged (not
 // enforced) if the geometric maximum ever dips under it, same pattern as
-// every other scene's grid math.
+// every other scene's grid math. Verified empirically (headless measurement)
+// that even the largest board (2x4, MAX_PAIRS) clears this at both tested
+// viewports — see HANDOFF decisions for the actual numbers and why: cellW
+// (not cellH) is the bottleneck here, and cellW only depends on GRID_COLS
+// (always 2), never on row count, so card size is pair-count-invariant.
 const CARD_SAFETY_FLOOR_PX = 120;
 
 // "250ms flip tween — scaleX trick is fine" (spec) — split into two 125ms
 // halves either side of the visible-face swap.
 const FLIP_HALF_MS = 125;
-// "both stay visible ~900ms (toddlers need longer look time than adults)" (spec).
-const MISMATCH_LOOK_MS = 900;
+// "keep 900ms at 2 pairs, use 1100ms at 3-4 pairs — more cards = more to
+// remember = longer look needed" (spec, verbatim).
+function mismatchLookMs(pairCount: number): number {
+  return pairCount <= 2 ? 900 : 1100;
+}
 
 export class MemoryScene extends Phaser.Scene {
   private memoryGame!: MemoryGame;
@@ -61,6 +71,13 @@ export class MemoryScene extends Phaser.Scene {
   private faceUp: MemoryCard[] = [];
   private resolving = false;
   private matchedPairs = 0;
+  // How many pairs the CURRENT/next round uses. Resets to MIN_PAIRS on every
+  // init() — including a resize-restart, same accepted simplification as
+  // QuizScene's correctStreak ("a resize mid-streak losing progress ... rare,
+  // harmless edge case, not worth extra plumbing to preserve across
+  // scene.restart()"). "Fresh session each visit" (spec) is satisfied by
+  // resetting on a real menu -> entry too, which this also covers.
+  private pairCount = MIN_PAIRS;
   private homeButton: Phaser.GameObjects.Container | null = null;
   private confettiTextureKey = 'confetti-particle';
   private lastSize = { w: 0, h: 0 };
@@ -75,6 +92,7 @@ export class MemoryScene extends Phaser.Scene {
     this.isResizeEntry = data.isResize ?? false;
     this.faceUp = [];
     this.resolving = false;
+    this.pairCount = MIN_PAIRS;
   }
 
   create(): void {
@@ -141,7 +159,10 @@ export class MemoryScene extends Phaser.Scene {
     this.homeButton = container;
   }
 
-  private computeLayout(): { positions: { x: number; y: number }[]; cardSize: number } {
+  // rows = pairCount (cards = pairCount * 2, cols fixed at 2) — 2 pairs =
+  // 2x2, 3 pairs = 2x3, 4 pairs = 2x4.
+  private computeLayout(pairCount: number): { positions: { x: number; y: number }[]; cardSize: number } {
+    const rows = pairCount;
     const dpr = window.devicePixelRatio || 1;
     const cssW = this.scale.width / dpr;
     const cssH = this.scale.height / dpr;
@@ -149,21 +170,21 @@ export class MemoryScene extends Phaser.Scene {
     const usableH = cssH - TOP_MARGIN_PX - EDGE_MARGIN_PX;
 
     const cellW = (usableW - CARD_GAP_PX * (GRID_COLS - 1)) / GRID_COLS;
-    const cellH = (usableH - CARD_GAP_PX * (GRID_ROWS - 1)) / GRID_ROWS;
+    const cellH = (usableH - CARD_GAP_PX * (rows - 1)) / rows;
     const cardSize = Math.min(cellW, cellH, CARD_MAX_PX);
     if (cardSize < CARD_SAFETY_FLOOR_PX) {
       console.info(
-        `[MemoryScene] 2x2 grid at ${Math.round(cssW)}x${Math.round(cssH)} can't reach the ${CARD_SAFETY_FLOOR_PX}px floor (best: ${Math.round(cardSize)}px).`,
+        `[MemoryScene] 2x${rows} grid at ${Math.round(cssW)}x${Math.round(cssH)} can't reach the ${CARD_SAFETY_FLOOR_PX}px floor (best: ${Math.round(cardSize)}px).`,
       );
     }
 
     const gridW = GRID_COLS * cardSize + (GRID_COLS - 1) * CARD_GAP_PX;
-    const gridH = GRID_ROWS * cardSize + (GRID_ROWS - 1) * CARD_GAP_PX;
+    const gridH = rows * cardSize + (rows - 1) * CARD_GAP_PX;
     const left = (cssW - gridW) / 2;
     const top = TOP_MARGIN_PX + Math.max(0, (usableH - gridH) / 2);
 
     const positions: { x: number; y: number }[] = [];
-    for (let row = 0; row < GRID_ROWS; row++) {
+    for (let row = 0; row < rows; row++) {
       for (let col = 0; col < GRID_COLS; col++) {
         positions.push({
           x: left + col * (cardSize + CARD_GAP_PX) + cardSize / 2,
@@ -178,11 +199,11 @@ export class MemoryScene extends Phaser.Scene {
     this.clearBoard();
     this.homeButton?.setInteractive();
 
-    const pair = shuffled(this.memoryGame.emojiPool).slice(0, TOTAL_PAIRS);
+    const pair = shuffled(this.memoryGame.emojiPool).slice(0, this.pairCount);
     const deck = shuffled([...pair, ...pair]);
 
     const dpr = window.devicePixelRatio || 1;
-    const { positions, cardSize } = this.computeLayout();
+    const { positions, cardSize } = this.computeLayout(this.pairCount);
 
     this.cards = deck.map((emoji, i) => {
       const pos = positions[i]!;
@@ -326,15 +347,17 @@ export class MemoryScene extends Phaser.Scene {
       this.faceUp = [];
       this.resolving = false;
       this.matchedPairs++;
-      if (this.matchedPairs === TOTAL_PAIRS) {
+      if (this.matchedPairs === this.pairCount) {
         this.time.delayedCall(500, () => this.celebrate());
       }
       return;
     }
 
-    // No match: spec's ~900ms look-time, THEN the neutral boop as they flip
-    // back down (not on reveal — the boop marks "flipping away", per spec).
-    this.time.delayedCall(MISMATCH_LOOK_MS, () => {
+    // No match: spec's look-time (900ms at 2 pairs, 1100ms at 3-4 — more
+    // cards to remember needs a longer look), THEN the neutral boop as they
+    // flip back down (not on reveal — the boop marks "flipping away", per
+    // spec).
+    this.time.delayedCall(mismatchLookMs(this.pairCount), () => {
       AudioManager.sfx('wrong');
       this.flipDown(a);
       this.flipDown(b);
@@ -368,7 +391,7 @@ export class MemoryScene extends Phaser.Scene {
     this.time.delayedCall(600, () => emitter.destroy());
   }
 
-  // Every round (2 pairs) is its own complete board, same granularity as
+  // Every round is its own complete board, same granularity as
   // MatchScene/SortScene's "full board -> celebrate" (unlike QuizScene's
   // every-5th-round rhythm, which exists because a single quiz question is a
   // much smaller unit than a full board).
@@ -376,6 +399,12 @@ export class MemoryScene extends Phaser.Scene {
     AudioManager.sfx('celebrate');
     AudioManager.voice(AudioManager.randomPraiseKey());
     this.homeButton?.disableInteractive();
+
+    // Post-toddler-QA difficulty progression: bump the pair count for the
+    // NEXT round now, so startRound() (fired at the end of this method)
+    // already picks up the new size. Capped at MAX_PAIRS — once there, every
+    // further round just stays at MAX_PAIRS.
+    this.pairCount = Math.min(this.pairCount + 1, MAX_PAIRS);
 
     this.cards.forEach((card, idx) => {
       this.tweens.add({

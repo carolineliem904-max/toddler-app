@@ -453,3 +453,154 @@ inferred from reading the code.
     viewports, zero console errors.
 - No app-code defects found — this change genuinely was "flip a default, the mechanism was
   already right," confirmed rather than assumed.
+
+---
+
+## Post-Slice-7: two real-toddler-QA changes — icon-to-emoji migration + memory progression
+
+### 1. Objects and destinations themes migrated from hand-drawn icons to emoji
+
+**QA finding:** the Slice 3 placeholder Graphics icons (`icons.ts`) weren't recognizable
+enough for a 2yo — confusion was worst on the destinations theme. Both themes now use the
+`emoji` renderer (Slice 5) instead, reusing this app's own established "real emoji, decorative
+color only" pattern (animals/vehicles/fruits/objects[new]) rather than any new machinery.
+
+- **Objects** (`renderer: 'object' -> 'emoji'`): fully migrated, no exceptions. Pool (6, per
+  spec's own example): 🍎 apple, ⚽ ball, 🌸 flower, 🐟 fish, 🚗 car, 🐤 chick. Overlap with
+  animals/vehicles/fruits' pools is fine — objects is explicitly the mixed-bag theme.
+- **Destinations** (`renderer: 'destination'`, kept — extended, not replaced): 5 of 6 pairs are
+  now emoji both sides — 🐦→🪹, 🐝→🌸, ⚽→🧺, 🚗→🏠 (was car→road; re-conceived as "car belongs
+  at home," not "on the road" — a deliberate spec change, not an oversight), ⛵→🌊. **One
+  deliberately-kept hybrid pair: `fish-bowl` (🐟→drawn bowl icon).** 🐟→🌊 would have collided
+  with `boat-water`'s water glyph (two different pairs both landing on the same destination
+  emoji is a real ambiguity, not a style nit) — the spec offered "keep the bowl, drop fish, or
+  hybrid" as equally acceptable; hybrid was chosen since it preserves a 6th pair's worth of
+  round variety for free, and the bowl specifically was never the part QA found confusing.
+  `pairsPerRound` stays 3 (destinations is still the conceptually hardest theme, unchanged).
+- **Emoji fallback check, done for real, not assumed:** 🪹 (nest) is Unicode 14.0, flagged as
+  the one glyph that might tofu-box. Verified via a headless Chromium screenshot (this sandbox's
+  actual test platform) before committing to it — it renders as a real glyph, so **no drawn-icon
+  fallback was needed** for nest. (All eight new glyphs across both themes were screenshotted
+  and visually confirmed recognizable — see the temporary verification script below.)
+- **`icons.ts` cleanup:** removed everything that became unused (apple/ball/cup/fish/flower/car/
+  bird/bee/boat/road/nest/water — eleven of thirteen `IconKind` variants and their `paintIcon`
+  cases). Kept exactly two: `bowl` (the fish-bowl hybrid pair) and `basket` (still load-bearing —
+  `SortScene.ts` draws its fruit-sort bins with `drawIcon(this, 'basket', ...)`, entirely
+  unrelated to the destinations theme; this was checked via a full-repo grep before deleting
+  anything, not assumed from the destinations pool alone). The now-fully-unused `'object'`
+  `RendererDef`/`RendererKind` variant was removed from `renderers.ts`/`themes.ts` too — dead
+  code, not a hook worth keeping (unlike e.g. `initiateFrom`, which was a deliberately-seeded
+  future toggle; this was just leftover generality from before the migration). `PairDef.icon`
+  (objects' old single-icon field) and `PairDef.leftIcon` (destinations' old object-side icon
+  field — every pair's left/object side is emoji now, no exceptions) were both removed for the
+  same reason; only `rightIcon` survives, for the one hybrid pair.
+- **`renderers.ts`'s `destination` RendererDef** now branches per-side: emoji when
+  `pair.leftEmoji`/`rightEmoji` is present (always true for left; true for 5 of 6 pairs on the
+  right), falling back to `drawIcon()` only for the fish-bowl pair's right side. An emoji-glyph
+  left side gets the same idle-breathing tween the plain `emoji` renderer uses (not drawn
+  `addEyes()` — an emoji already has its own face/identity, and drawing googly eyes over a
+  soccer-ball or car emoji would look like a rendering glitch, not a character). A drawn-icon
+  right side keeps the original desaturate+dim matched-style; an emoji right side gets the
+  plain renderer's alpha-only matched-style (glyphs can't be reliably tinted).
+- **CARD_ICON_OVERRIDE re-checked, not blindly kept:** both entries turned out not to need
+  changing, but only because of deliberate array ordering, not accident.
+  - `objects: { pairId: 'fish', role: 'left' }` — 'fish' still exists in the migrated pool
+    (now 🐟 instead of a drawn icon, same ~0xff9f45 orange identity color). No collision: no
+    other card is orange/fish-shaped, and the nearest warm-tone neighbors (fruitsort's brown
+    basket, bigsmall's tan elephant) have completely different silhouettes.
+  - `destinations: { role: 'right' }` (no `pairId`, defaults to `pairs[0]`) — kept working
+    specifically because `fish-bowl` was placed **first** in the new `DESTINATION_POOL` array
+    for this reason: the destinations menu card still renders the exact same drawn blue bowl
+    icon (0x7fb6e0) it always has, zero visual change. This does collide with the counting
+    quiz card's blue dots (0x5c8fd6) — accepted, same "different silhouette, don't sweat close
+    hues" category as every other logged exception in this file (a bowl vs. a row of dots
+    share nothing but a hue family).
+- **Verification:** a temporary Playwright script (`scripts/tmp-verify-icons-memory.ts` —
+  written, run, deleted; confirmed absent via `grep -rn "tmp-verify" scripts/`) navigated to
+  both migrated themes at both viewports, confirmed the right theme loaded, and saved a
+  screenshot of each for by-eye recognizability review (reviewed directly — every glyph reads
+  clearly, no tofu boxes, sensible object→destination pairings). `npm run verify:audio` re-run
+  unchanged (match/select/wrong/correct/celebrate call shapes don't depend on which renderer
+  draws the item). Full 12-entry regression, both viewports, zero console errors.
+
+### 2. Memory game difficulty progression (2 -> 3 -> 4 pairs within a session)
+
+**QA finding:** 2 pairs is now mastered. `MemoryScene` rounds now follow a sequence: start at
+`MIN_PAIRS` (2), +1 pair after each completed round, capped at `MAX_PAIRS` (4) — 2×2, then
+2×3, then 2×4, then every round after that stays at 2×4. `GRID_COLS` stays fixed at 2 (same
+"no candidate-column search needed" reasoning as the original 2×2 board — only the row count
+now varies, `rows = pairCount` since `cards = pairCount * 2`).
+
+- **Resets to `MIN_PAIRS` on every `init()`, including a resize-restart** — deliberately the
+  same simplification QuizScene's `correctStreak` already uses ("a resize mid-streak losing
+  progress ... rare, harmless edge case, not worth extra plumbing to preserve across
+  `scene.restart()`"). "Fresh session each visit" (spec) is satisfied by this covering a real
+  menu → entry too; a device-rotation-mid-game reset is the accepted, harmless edge case, same
+  category as QuizScene's.
+- **Look-time scales with grid size:** `mismatchLookMs(pairCount)` returns 900ms at 2 pairs,
+  1100ms at 3–4 — "more cards = more to remember = longer look needed" (spec, verbatim). The
+  boop still fires on flip-*back*, not on reveal (unchanged from Slice 7's original decision).
+- **120px floor verified empirically at every grid size, both viewports — no phone-specific
+  cap was needed** (the spec's own fallback: "if not, cap phone at 3 pairs"). Measured
+  `cardSize` via the scene's real `computeLayout()`, headless:
+
+  | pairs | grid | 390×844 (phone) | 768×1024 (tablet) |
+  |---|---|---|---|
+  | 2 | 2×2 | 125px | 220px (capped by `CARD_MAX_PX`) |
+  | 3 | 2×3 | 125px | 220px (capped by `CARD_MAX_PX`) |
+  | 4 | 2×4 (`MAX_PAIRS`) | 125px | 187px |
+
+  The reason phone stays flat at 125px across every pair count (not just "happens to clear
+  120"): `cardSize = min(cellW, cellH, CARD_MAX_PX)`, and `cellW` depends only on `GRID_COLS`
+  (fixed at 2) and viewport width — never on row count — so on phone width, `cellW` (125px) is
+  the binding constraint at every grid size, not `cellH`. Tablet has enough width that
+  `CARD_MAX_PX` (220) binds instead at 2–3 pairs, and only at 4 pairs does `cellH` finally
+  become tighter than `cellW` (dropping to 187px) — still comfortably clear of the 120px floor.
+- **Input-lock race re-verified specifically at 4 pairs (8 cards)**, both viewports, using the
+  same two techniques as the original Slice 7 verification: three zero-elapsed synchronous
+  calls to `handleCardTap()` in one JS tick (the tightest possible margin), confirming exactly
+  2 of 8 cards are ever accepted as face-up regardless of board size — the gating logic
+  (`this.resolving`, `this.faceUp.length`, synchronous state mutation at tap-accept time) never
+  referenced card count in the first place, so this was expected to generalize, and was
+  confirmed to.
+- **Verification:** the same temporary script drove all of round 1 (2 pairs) → round 2 (3
+  pairs) → round 3 (4 pairs) → round 4 (still 4 pairs, confirming the cap holds), completing
+  each round for real (tapping genuine matching pairs, not poking scene state), checking grid
+  shape, card-size floor, and mismatch timing at each step, plus the celebration firing between
+  rounds and the fresh-entry reset back to 2 pairs. Both viewports. Followed by the standard
+  full 12-entry regression, zero console errors. `npm run verify:audio` re-run unchanged (its
+  memory checkpoints only ever exercise round 1, which is always exactly 2 pairs/4 cards
+  regardless of this change, since `pairCount` resets to `MIN_PAIRS` on every fresh entry).
+
+### File map (this change)
+- `src/data/themes.ts` — `OBJECT_POOL` rewritten to `emoji`+`color` pairs; `DESTINATION_POOL`
+  rewritten to `leftEmoji`/`rightEmoji` pairs (+ one `rightIcon` hybrid); `objects` theme's
+  `renderer` changed to `'emoji'`; `RendererKind` and `PairDef` lost `'object'`/`icon`/`leftIcon`
+  (dead after the migration).
+- `src/rendering/renderers.ts` — `object` `RendererDef` removed; `destination` `RendererDef`
+  rewritten for the emoji/icon hybrid (see above).
+- `src/rendering/icons.ts` — cut from 14 `IconKind` variants to 2 (`bowl`, `basket`).
+- `src/scenes/MenuScene.ts` — `CARD_ICON_OVERRIDE`'s comment block extended with the
+  post-migration differentiation re-check (no data/logic change).
+- `src/scenes/MemoryScene.ts` — `TOTAL_PAIRS`/`GRID_ROWS` constants replaced by `MIN_PAIRS`
+  (2) / `MAX_PAIRS` (4) and a `pairCount` instance field; `computeLayout()` takes `pairCount`
+  as a parameter (`rows = pairCount`); new `mismatchLookMs(pairCount)` helper; `celebrate()`
+  bumps `pairCount` (clamped to `MAX_PAIRS`) before the next `startRound()`.
+
+### Notes for Slice 8
+- Both changes reused 100% existing machinery (`emoji` RendererDef, `destination` RendererDef's
+  existing per-role branching pattern, `computeLayout`-per-scene conventions) — no new
+  abstractions were introduced for either change.
+- Objects/destinations' emoji migration means **every** matching theme now uses a renderer
+  that shows a real, recognizable glyph or a solid color — `shapes`/`shadows` (abstract shapes)
+  are now the only themes still relying on non-photorealistic shapes for identity. Worth
+  keeping in mind if QA ever flags those as unclear too — the "migrate to emoji" playbook from
+  this change would apply directly, though shapes are a fundamentally different pedagogical
+  goal (shape recognition itself, not object recognition) so it's not obviously the right move
+  there even if requested.
+- Memory's difficulty progression is the second age/difficulty-adjacent feature shipped this
+  slice's cluster (after "either"-initiation), and the third overall counting difficulty-
+  adjacent seed still sits unimplemented (`SHAPE_CROSS_COLOR_MODE`, a counting digits-only
+  mode) — an eventual age-mode selector would need to reconcile "always-on progression within a
+  session" (memory, now real) against "static difficulty toggle" (the other two, still
+  seeds) as two different shapes of the same underlying idea.

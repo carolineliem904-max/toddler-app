@@ -47,8 +47,8 @@ const CARD_VISIBILITY_TAP_THRESHOLD = 0.6;
 // *random* color per call (shape) — without pinning it here, the card would
 // reroll to a random color on every menu load/resize, defeating the
 // no-shared-dominant-color requirement below. Renderers with a fixed
-// per-pair/per-icon color (colorBlob, shadow, object, destination) don't
-// need it.
+// per-pair/per-icon color (colorBlob, shadow, destination, and now objects
+// via the emoji renderer) don't need it.
 //
 // Slice 4 differentiation pass (HANDOFF Part A1): chosen so no two cards
 // share a dominant color AND no two cards share a silhouette, EXCEPT shapes
@@ -64,6 +64,25 @@ const CARD_VISIBILITY_TAP_THRESHOLD = 0.6;
 // red (different exact shades: 0xe0483c vs 0xff3b30) — same category of
 // exception as Slice 4's shapes/destinations blue overlap (non-adjacent grid
 // cells, completely different silhouettes). Full matrix in HANDOFF.
+//
+// Post-toddler-QA icon migration (objects/destinations -> emoji, see
+// HANDOFF): re-checked both entries against every other card rather than
+// changing them blindly.
+// - `objects: { pairId: 'fish', role: 'left' }` kept as-is — 'fish' still
+//   exists in the migrated OBJECT_POOL (now an 🐟 emoji instead of a drawn
+//   icon, same ~0xff9f45 orange identity color). No other card is
+//   orange/fish-shaped; the closest warm-tone neighbors (fruitsort's brown
+//   basket, bigsmall's tan elephant) have completely different silhouettes,
+//   same "different glyph, don't sweat close hues" precedent as the
+//   vehicles/colors red overlap above.
+// - `destinations: { role: 'right' }` (no pairId, defaults to `pairs[0]`)
+//   kept as-is too, BUT only because `fish-bowl` was deliberately placed
+//   first in the new `DESTINATION_POOL` array specifically to preserve
+//   this — the destinations card still renders the exact same drawn blue
+//   bowl icon (0x7fb6e0) it always has, zero visual change. This does
+//   collide with the counting quiz card's blue dots (0x5c8fd6) — accepted,
+//   same "different silhouette" category as every other logged exception
+//   here (a bowl icon vs. a row of dots share nothing but a hue family).
 const CARD_ICON_OVERRIDE: Partial<Record<string, { pairId?: string; role: 'left' | 'right'; color?: number }>> = {
   colors: { pairId: 'red', role: 'left' },
   shapes: { pairId: 'star', role: 'left', color: PALETTE.yellow },

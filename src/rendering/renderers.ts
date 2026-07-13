@@ -207,32 +207,48 @@ const shadow: RendererDef = {
   },
 };
 
-const object: RendererDef = {
-  resolveInstance: (pair) => {
-    const c = ICON_COLORS[pair.icon ?? 'apple'];
-    return { leftColor: c, rightColor: c };
-  },
-  render: ({ scene, x, y, radius, role, color, pair }) => {
-    const container = scene.add.container(x, y);
-    const body = drawIcon(scene, pair.icon ?? 'apple', radius, color);
-    container.add(body.gameObject);
-    if (role === 'left') addEyes(scene, container, radius);
-    return { container, applyMatchedStyle: matchedStyleApplier(container, body, color) };
-  },
-};
-
+// Post-toddler-QA icon migration (see HANDOFF): destination pairs now render
+// an emoji glyph per side — every pair's object (left) side is emoji, no
+// exceptions, so the left side has no drawn-icon path at all anymore. The
+// destination (right) side falls back to the Slice 3 drawn-icon path
+// (`rightIcon`) only for the one deliberately-kept hybrid pair (fish-bowl —
+// the bowl was never the confusing part). Unlike a drawn icon (whose `color`
+// literally fills the shape), an emoji glyph's `color` is purely decorative
+// (connecting-line/confetti/card-tint only, same convention as the plain
+// `emoji` RendererDef) since real emoji glyphs render with their own
+// inherent color and ignore fill/tint.
 const destination: RendererDef = {
   resolveInstance: (pair) => ({
-    leftColor: ICON_COLORS[pair.leftIcon ?? 'fish'],
-    rightColor: ICON_COLORS[pair.rightIcon ?? 'bowl'],
+    leftColor: pair.color ?? randomColor(),
+    rightColor: pair.rightEmoji ? (pair.color ?? randomColor()) : ICON_COLORS[pair.rightIcon ?? 'bowl'],
   }),
   render: ({ scene, x, y, radius, role, color, pair }) => {
     const container = scene.add.container(x, y);
-    const icon = role === 'left' ? (pair.leftIcon ?? 'fish') : (pair.rightIcon ?? 'bowl');
-    const body = drawIcon(scene, icon, radius, color);
+
+    if (role === 'left') {
+      // Always emoji — left already has its own face/identity (same
+      // reasoning as the plain `emoji` renderer), so it gets the idle
+      // breathing loop instead of drawn eyes.
+      container.add(createEmojiText(scene, pair.leftEmoji ?? '❓', radius * 1.6));
+      scene.tweens.add({
+        targets: container,
+        scale: { from: 1, to: 1.06 },
+        duration: 900,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+      // Emoji glyphs can't be tinted/desaturated reliably (same reasoning as
+      // the plain `emoji` renderer) — alpha-only matched style.
+      return { container, applyMatchedStyle: () => container.setAlpha(0.35) };
+    }
+
+    if (pair.rightEmoji) {
+      container.add(createEmojiText(scene, pair.rightEmoji, radius * 1.6));
+      return { container, applyMatchedStyle: () => container.setAlpha(0.35) };
+    }
+    const body = drawIcon(scene, pair.rightIcon ?? 'bowl', radius, color);
     container.add(body.gameObject);
-    // Left = the object (a character, gets eyes). Right = the destination it belongs to (no face).
-    if (role === 'left') addEyes(scene, container, radius);
     return { container, applyMatchedStyle: matchedStyleApplier(container, body, color) };
   },
 };
@@ -273,4 +289,4 @@ const emoji: RendererDef = {
   },
 };
 
-export const RENDERERS: Record<RendererKind, RendererDef> = { colorBlob, shape, shadow, object, destination, emoji };
+export const RENDERERS: Record<RendererKind, RendererDef> = { colorBlob, shape, shadow, destination, emoji };
