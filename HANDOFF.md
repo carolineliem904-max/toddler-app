@@ -387,3 +387,69 @@ including in the production build specifically.
   every slice's scope so far.
 - `AudioManager` remains a plain module-level singleton (now shared across 5 scenes instead of
   4) — still fine at this scale.
+
+---
+
+## Post-Slice-7: interaction model change — `initiateFrom: 'either'` is now the default
+
+**Real-toddler QA finding:** the toddler initiates a match from the right column as often as
+the left. `initiateFrom` (seeded in Slice 2, carried as a documented-but-unreachable flag ever
+since — see the removed Slice 5/6/7 "unimplemented seed" notes that used to reference it) has
+its answer: **`'either'` is now MatchScene's default** for every matching theme.
+
+### Rule set (now the default, all matching themes)
+1. Tap any item, either column → it becomes selected (pulse, unchanged from before).
+2. Tap an item on the OPPOSITE side → normal match resolution (correct → connecting line +
+   lock, wrong → wiggle; selection is preserved on a wrong tap either way).
+3. Tap a different item on the SAME side as the current selection → selection switches to it.
+4. Tap the ALREADY-SELECTED item again → nothing happens; it stays selected. Deliberately not a
+   deselect toggle — toddlers double-tap constantly, and a toggle would make selection feel
+   broken/inconsistent.
+
+### The actual code change was one line
+`handleTap()`/`canInitiate()`/`handleCorrectMatch()` (see MatchScene.ts) already implemented
+every rule above generically, with zero branching on which side started the selection —
+`canInitiate()` only gated the "start a selection from nothing" and "switch within the same
+side" cases, and `handleCorrectMatch()` always derives left/right from `selected.side` before
+doing anything match-specific. This was all built correctly back in Slice 2 as a clean insertion
+point for exactly this QA outcome; it just wasn't the *default* yet. The entire change is
+flipping `private readonly initiateFrom: 'left' | 'either' = 'left'` to `= 'either'`, plus
+updating the comments that used to describe it as "not a supported mode yet" (in MatchScene.ts
+itself, and two now-stale cross-references in `sortGames.ts`/`quizGames.ts` that pointed at it
+as an example of an "unused insertion point"). `'left'` mode is untouched and still fully
+functional — just no longer reachable via any default entry point; flip the field directly for
+a manual comparison if ever needed again.
+
+**Side-agnostic match resolution, specifically verified:** `RoundItem.lineColor` is set to
+`resolved.leftColor` when *both* the left-column and right-column instances of a pair are
+created (`createItem()` doesn't branch on `role` for this field) — so whichever instance
+`handleCorrectMatch()`'s left/right ternary happens to read `.lineColor` from, it's always the
+same value. This is why the connecting line and confetti color were already correct for
+right-initiated matches with no changes needed; verified directly (see below) rather than just
+inferred from reading the code.
+
+### Verification
+- **`npm run verify:audio`** (permanent regression guard, unchanged) — re-run and passed with
+  no modifications; select/wrong/correct/celebrate all fire with identical call shapes
+  regardless of which side initiates, as expected (the sfx call sites don't know or care about
+  initiation side either).
+- **Temporary Playwright script** (`scripts/tmp-verify-either.ts` — written, run, deleted;
+  confirmed absent via `git status` and `grep -rn "tmp-verify" scripts/`), at both viewports,
+  all against real taps within a single 4-pair round (the `colors` theme) so later phases
+  build on earlier ones the way an actual play session would:
+  1. Right-initiated correct match — selection starts on `right`, resolves correctly on the
+     matching `left` tap, both items lock, the connecting line's `x1 < x2` (always drawn
+     left→right on screen regardless of tap order) with the pair's true `lineColor`.
+  2. Right-initiated wrong match — selection survives the wrong tap unchanged (still the
+     original right item, per spec: no deselect on a wrong tap).
+  3. Same-side switch on the **right** (continuing the still-active right selection from #2)
+     and, in a separate phase, the **left** — both move the selection to the newly-tapped item.
+  4. Double-tapping the already-selected item — selection unchanged **and** (checked via the
+     same AudioContext-wrapping technique `verify-audio-paths.ts` uses) zero oscillators
+     started, confirming the early-return truly short-circuits before any sfx call.
+  5. A mixed sequence in one round: a left-started match completed, immediately followed by a
+     right-started match completed, on two different pairs of the same board.
+  - Followed by the standard full regression: all 12 menu entries, one visit each, both
+    viewports, zero console errors.
+- No app-code defects found — this change genuinely was "flip a default, the mechanism was
+  already right," confirmed rather than assumed.

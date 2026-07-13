@@ -5,8 +5,7 @@ import { PALETTE } from './palette';
 // kept separate (rather than items pointing at a bin id directly) so a round
 // can freely reorder/reposition bins without needing to touch item data —
 // SortScene doesn't currently randomize bin order, but this keeps that door
-// open the same way MatchScene keeps 'either' initiateFrom as an unused but
-// clean insertion point.
+// open for later.
 export interface SortBinDef {
   id: string;
   accepts: string;

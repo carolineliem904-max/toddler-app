@@ -45,8 +45,7 @@ function randInt(min: number, max: number): number {
 // Subitizing (instant small-quantity recognition) precedes numeral literacy
 // for 2-3yo — answers are dot clusters, never digits, per spec. A digits mode
 // is explicitly out of scope this slice; same unimplemented-seed pattern as
-// SHAPE_CROSS_COLOR_MODE (renderers.ts) / initiateFrom (MatchScene.ts) for a
-// future difficulty step.
+// SHAPE_CROSS_COLOR_MODE (renderers.ts) for a future difficulty step.
 const COUNTING_EMOJI = ['🍎', '🐤', '🐟', '🌸', '⚽'];
 const COUNT_MIN = 1;
 const COUNT_MAX = 5;

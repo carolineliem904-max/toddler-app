@@ -77,10 +77,17 @@ export class MatchScene extends Phaser.Scene {
   private homeButton: Phaser.GameObjects.Container | null = null;
   private isResizeEntry = false;
 
-  // Which side may start (or switch) a selection. Only 'left' is implemented
-  // behaviorally — 'either' is a clean insertion point for when real-toddler
-  // QA on the left-first tap model comes back, not a supported mode yet.
-  private readonly initiateFrom: 'left' | 'either' = 'left';
+  // Which side may start (or switch) a selection. Real-toddler QA (see
+  // HANDOFF) found the toddler initiates from the right side as often as the
+  // left, so 'either' is now the default for all matching themes — a tap on
+  // either column starts a selection, an opposite-side tap resolves the
+  // match, a same-side tap on a different item switches the selection, and
+  // re-tapping the already-selected item is a no-op (no deselect toggle;
+  // toddlers double-tap constantly and a toggle would make selection feel
+  // broken). 'left' mode is kept working (not deleted) as a manual fallback,
+  // but is no longer reachable via any default entry point — flip this field
+  // directly if it's ever needed again (e.g. regression comparison).
+  private readonly initiateFrom: 'left' | 'either' = 'either';
 
   constructor() {
     super('MatchScene');
