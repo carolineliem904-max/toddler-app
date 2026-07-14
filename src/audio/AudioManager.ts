@@ -84,6 +84,9 @@ class AudioManagerImpl {
 
   /** Plays a voice line if its file loaded successfully; silently no-ops otherwise (missing file, still loading, or muted). */
   voice(key: VoiceKey): void {
+    // Dev-only call log, independent of whether a buffer loaded — see
+    // `debugVoiceLog`'s own comment for why this exists.
+    if (import.meta.env.DEV) this.debugVoiceLog.push({ key, t: performance.now() });
     if (this.muted || !this.ctx) return;
     const buffer = this.voiceBuffers.get(key);
     if (!buffer) return;
@@ -94,6 +97,23 @@ class AudioManagerImpl {
     src.connect(gain).connect(this.ctx.destination);
     src.start();
   }
+
+  /**
+   * Dev-only call log for `voice()` — records every call regardless of
+   * whether its buffer loaded. This project ships zero real mp3s (see
+   * HANDOFF's voice-recording checklist), so `voice()`'s own
+   * `if (!buffer) return` guard means no WebAudio node is ever created for
+   * it in this environment; `scripts/verify-audio-paths.ts`'s existing
+   * AudioContext-wrapping technique (which asserts on oscillator/buffer-
+   * source `start()` calls) can only ever see the sfx side of a "chime, then
+   * word" pair, never the voice side. This log lets that script assert the
+   * voice *call path* fires anyway (e.g. bigsmall's word line firing ~150ms
+   * after its correct-answer chime) — same "strip from production"
+   * discipline as `main.ts`'s `window.__game` (Vite removes this whole
+   * field's writes since `import.meta.env.DEV` is false there; verify with a
+   * prod build if ever in doubt, don't just trust the comment).
+   */
+  readonly debugVoiceLog: { key: VoiceKey; t: number }[] = [];
 
   /**
    * True only if this line's buffer has actually finished loading — false
@@ -222,3 +242,11 @@ class AudioManagerImpl {
 }
 
 export const AudioManager = new AudioManagerImpl();
+
+// Dev-only introspection hook, same pattern/rationale as main.ts's
+// window.__game — lets scripts/verify-audio-paths.ts read `debugVoiceLog`
+// without a duplicate AudioManager reference of its own. Stripped from
+// production builds since import.meta.env.DEV is false there.
+if (import.meta.env.DEV) {
+  (window as unknown as { __audioManager: typeof AudioManager }).__audioManager = AudioManager;
+}

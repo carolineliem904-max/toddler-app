@@ -11,7 +11,11 @@ export type PromptSpec =
 
 export type AnswerSpec =
   | { kind: 'dots'; count: number; correct: boolean }
-  | { kind: 'emojiScale'; emoji: string; scaleFactor: number; correct: boolean };
+  // `voice` is the English word confirming THIS answer's own size (big/small),
+  // not the round's target — playing whichever card the toddler actually
+  // taps needs no separate target lookup on the scene side. Only bigsmall
+  // uses this kind, so it's always populated here (never optional).
+  | { kind: 'emojiScale'; emoji: string; scaleFactor: number; correct: boolean; voice: VoiceKey };
 
 export interface QuizRound {
   prompt: PromptSpec;
@@ -100,8 +104,8 @@ function generateBigSmallRound(): QuizRound {
   const emoji = BIGSMALL_EMOJI[randInt(0, BIGSMALL_EMOJI.length - 1)]!;
   const target: 'big' | 'small' = Math.random() < 0.5 ? 'big' : 'small';
   const answers = shuffled<AnswerSpec>([
-    { kind: 'emojiScale', emoji, scaleFactor: BIG_SCALE, correct: target === 'big' },
-    { kind: 'emojiScale', emoji, scaleFactor: SMALL_SCALE, correct: target === 'small' },
+    { kind: 'emojiScale', emoji, scaleFactor: BIG_SCALE, correct: target === 'big', voice: 'word_big' },
+    { kind: 'emojiScale', emoji, scaleFactor: SMALL_SCALE, correct: target === 'small', voice: 'word_small' },
   ]);
   return {
     prompt: { kind: 'sizeCue', target },

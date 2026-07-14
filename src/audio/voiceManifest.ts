@@ -19,11 +19,19 @@ export type VoiceKey =
   | 'praise_1'
   | 'praise_2'
   | 'praise_3'
-  | 'praise_4';
+  | 'praise_4'
+  | 'word_big'
+  | 'word_small';
 
 interface VoiceLine {
   file: string;
-  /** Indonesian line text — the recording script, not shown in-game (no text in gameplay, per CLAUDE.md). */
+  /**
+   * Recording script text, not shown in-game (no text in gameplay, per
+   * CLAUDE.md). Indonesian for every line except `word_big`/`word_small`,
+   * which are the bigsmall quiz's deliberately-English bilingual reward
+   * words — see HANDOFF's voice-recording checklist for the id/en language
+   * column.
+   */
   text: string;
 }
 
@@ -47,6 +55,8 @@ export const VOICE_MANIFEST: Record<VoiceKey, VoiceLine> = {
   praise_2: { file: 'praise_2.mp3', text: 'Hebat!' },
   praise_3: { file: 'praise_3.mp3', text: 'Yeay!' },
   praise_4: { file: 'praise_4.mp3', text: 'Bagus sekali!' },
+  word_big: { file: 'word_big.mp3', text: 'Big!' },
+  word_small: { file: 'word_small.mp3', text: 'Small!' },
 };
 
 // theme.id -> its intro voice key. MatchScene.create() looks this up once

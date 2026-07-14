@@ -93,6 +93,21 @@ async function readAndClearLog(page: Page): Promise<string[]> {
     return l;
   });
 }
+// AudioManager.voice()'s own `if (!buffer) return` guard means it never
+// reaches a real WebAudio node when no mp3 is shipped (true for every voice
+// key in this repo, always) — so the __audioLog wrapping above can never see
+// a 'voice' entry. `window.__audioManager.debugVoiceLog` (dev-only, see
+// AudioManager.ts) records the call itself regardless of buffer presence,
+// which is what lets this script assert a voice call PATH fires.
+async function readAndClearVoiceLog(page: Page): Promise<{ key: string; t: number }[]> {
+  return page.evaluate(() => {
+    const am = (window as any).__audioManager;
+    if (!am) return [];
+    const l = [...am.debugVoiceLog];
+    am.debugVoiceLog.length = 0;
+    return l;
+  });
+}
 
 async function waitForServer(url: string, timeoutMs: number): Promise<void> {
   const start = Date.now();
@@ -270,6 +285,76 @@ async function main(): Promise<void> {
     await click(page, correctCard.x, correctCard.y);
     await page.waitForTimeout(300);
     assertCount('quiz correct answer -> correct sfx (chime)', 3, await readAndClearLog(page));
+
+    console.log('\n=== Home -> Big/small quiz: correct chime + delayed word voice, wrong stays silent ===');
+    const homeBtn2b = await page.evaluate(() => {
+      const g = (window as any).__game;
+      const scene = g.scene.getScene('QuizScene');
+      return { x: scene.homeButton.x, y: scene.homeButton.y };
+    });
+    await click(page, homeBtn2b.x, homeBtn2b.y);
+    await waitForScene(page, 'MenuScene');
+    await page.waitForTimeout(300);
+    pos = await menuCardPos(10);
+    await click(page, pos.x, pos.y); // big/small quiz entry
+    await waitForScene(page, 'QuizScene');
+    await page.waitForTimeout(400);
+
+    const getBigSmallCards = async () =>
+      page.evaluate(() => {
+        const g = (window as any).__game;
+        const scene = g.scene.getScene('QuizScene');
+        return scene.answerCards.map((c: any) => ({ x: c.container.x, y: c.container.y, correct: c.answer.correct, voice: c.answer.voice }));
+      });
+
+    // Wrong tap first (spec: "wrong answers unchanged — neutral boop only,
+    // no voice"): confirm the boop fires and debugVoiceLog stays empty.
+    let bsCards = await getBigSmallCards();
+    const wrongBS = bsCards.find((c: any) => !c.correct)!;
+    await readAndClearLog(page);
+    await readAndClearVoiceLog(page);
+    await click(page, wrongBS.x, wrongBS.y);
+    await page.waitForTimeout(300);
+    assertCount('bigsmall wrong answer -> wrong sfx (boop)', 1, await readAndClearLog(page));
+    const wrongVoiceLog = await readAndClearVoiceLog(page);
+    if (wrongVoiceLog.length === 0) {
+      console.log('  ok: bigsmall wrong answer -> no voice() call');
+    } else {
+      failures++;
+      console.error(`  FAIL: bigsmall wrong answer -> expected no voice() call, got [${wrongVoiceLog.map((v) => v.key).join(', ')}]`);
+    }
+
+    // New round (the round above is now dead — the wrong tap only dims one
+    // card, it doesn't advance): correct tap should fire the chime, then the
+    // matching word voice call ~150ms later (layered, not queued, per spec).
+    bsCards = await getBigSmallCards();
+    const correctBS = bsCards.find((c: any) => c.correct)!;
+    await readAndClearLog(page);
+    await readAndClearVoiceLog(page);
+    const tapT0 = await page.evaluate(() => performance.now());
+    await click(page, correctBS.x, correctBS.y);
+    await page.waitForTimeout(400);
+    assertCount('bigsmall correct answer -> correct sfx (chime)', 3, await readAndClearLog(page));
+    const correctVoiceLog = await readAndClearVoiceLog(page);
+    const wordEntry = correctVoiceLog.find((v) => v.key === correctBS.voice);
+    if (!wordEntry) {
+      failures++;
+      console.error(
+        `  FAIL: bigsmall correct answer -> expected a voice() call for '${correctBS.voice}', got [${correctVoiceLog.map((v) => v.key).join(', ')}]`,
+      );
+    } else {
+      const delayMs = wordEntry.t - tapT0;
+      // Generous window around the spec's ~150ms (allows for click-dispatch
+      // and Phaser's own timer-tick overhead) — tight enough to catch a
+      // regression to "synchronous" (0ms, the pattern every other sfx+voice
+      // pairing in this app uses) or "not scheduled at all".
+      if (delayMs >= 100 && delayMs <= 400) {
+        console.log(`  ok: bigsmall correct answer -> word voice ('${wordEntry.key}') fires ~${Math.round(delayMs)}ms after the chime`);
+      } else {
+        failures++;
+        console.error(`  FAIL: bigsmall word voice fired ${Math.round(delayMs)}ms after the tap — expected roughly 150ms (100-400ms window)`);
+      }
+    }
 
     console.log('\n=== Home -> Memory: flip, correct (match), wrong (mismatch), celebrate ===');
     const homeBtn3 = await page.evaluate(() => {

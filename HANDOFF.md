@@ -310,34 +310,38 @@ plainly rather than implying parity with those prior findings:
   discipline as every prior slice's ad-hoc instrumentation) — confirmed absent via `git status`
   and a `grep -rn "tmp-verify" scripts/` returning nothing.
 
-### Voice-recording checklist (extended, now 17 lines)
+### Voice-recording checklist (extended, now 19 lines)
 
-Record each line in Indonesian, export as mp3, drop into `public/audio/voice/` using the exact
-filename below — no code change needed either way.
+Record each line in the language given, export as mp3, drop into `public/audio/voice/` using
+the exact filename below — no code change needed either way. Every line is Indonesian except
+the two bilingual reward words (`word_big`/`word_small`), which are deliberately English — see
+the bigsmall bilingual-reward-words note below.
 
-| Key | Filename | Indonesian line | Trigger |
-|---|---|---|---|
-| `theme_colors_intro` | `theme_colors_intro.mp3` | "Ayo cocokkan warnanya!" | Entering the **colors** theme from the menu |
-| `theme_shapes_intro` | `theme_shapes_intro.mp3` | "Ayo cocokkan bentuknya!" | Entering the **shapes** theme from the menu |
-| `theme_shadows_intro` | `theme_shadows_intro.mp3` | "Dimanakah bayanganku?" | Entering the **shadows** theme from the menu |
-| `theme_objects_intro` | `theme_objects_intro.mp3` | "Ayo cari yang sama!" | Entering the **objects** theme from the menu |
-| `theme_destinations_intro` | `theme_destinations_intro.mp3` | "Di mana rumahku?" | Entering the **destinations** theme from the menu |
-| `theme_animals_intro` | `theme_animals_intro.mp3` | "Ayo cari hewannya!" | Entering the **animals** theme from the menu |
-| `theme_vehicles_intro` | `theme_vehicles_intro.mp3` | "Ayo cari kendaraannya!" | Entering the **vehicles** theme from the menu |
-| `theme_fruits_intro` | `theme_fruits_intro.mp3` | "Ayo cari buahnya!" | Entering the **fruits** theme from the menu |
-| `game_fruitsort_intro` | `game_fruitsort_intro.mp3` | "Ayo pilah buahnya!" | Entering the **fruit sorting** game from the menu |
-| `game_memory_intro` | `game_memory_intro.mp3` | "Di mana kembarannya?" | Entering the **memory** game from the menu |
-| `quiz_counting_intro` | `quiz_counting_intro.mp3` | "Ayo hitung! Ada berapa?" | Each round of the **counting** quiz starts |
-| `quiz_big_intro` | `quiz_big_intro.mp3` | "Mana yang besar?" | A **big/small** quiz round asks for "big" |
-| `quiz_small_intro` | `quiz_small_intro.mp3` | "Mana yang kecil?" | A **big/small** quiz round asks for "small" |
-| `praise_1` | `praise_1.mp3` | "Pintar!" | Random pick on full-board celebration |
-| `praise_2` | `praise_2.mp3` | "Hebat!" | Random pick on full-board celebration |
-| `praise_3` | `praise_3.mp3` | "Yeay!" | Random pick on full-board celebration |
-| `praise_4` | `praise_4.mp3` | "Bagus sekali!" | Random pick on full-board celebration |
+| Key | Filename | Lang | Line | Trigger |
+|---|---|---|---|---|
+| `theme_colors_intro` | `theme_colors_intro.mp3` | id | "Ayo cocokkan warnanya!" | Entering the **colors** theme from the menu |
+| `theme_shapes_intro` | `theme_shapes_intro.mp3` | id | "Ayo cocokkan bentuknya!" | Entering the **shapes** theme from the menu |
+| `theme_shadows_intro` | `theme_shadows_intro.mp3` | id | "Dimanakah bayanganku?" | Entering the **shadows** theme from the menu |
+| `theme_objects_intro` | `theme_objects_intro.mp3` | id | "Ayo cari yang sama!" | Entering the **objects** theme from the menu |
+| `theme_destinations_intro` | `theme_destinations_intro.mp3` | id | "Di mana rumahku?" | Entering the **destinations** theme from the menu |
+| `theme_animals_intro` | `theme_animals_intro.mp3` | id | "Ayo cari hewannya!" | Entering the **animals** theme from the menu |
+| `theme_vehicles_intro` | `theme_vehicles_intro.mp3` | id | "Ayo cari kendaraannya!" | Entering the **vehicles** theme from the menu |
+| `theme_fruits_intro` | `theme_fruits_intro.mp3` | id | "Ayo cari buahnya!" | Entering the **fruits** theme from the menu |
+| `game_fruitsort_intro` | `game_fruitsort_intro.mp3` | id | "Ayo pilah buahnya!" | Entering the **fruit sorting** game from the menu |
+| `game_memory_intro` | `game_memory_intro.mp3` | id | "Di mana kembarannya?" | Entering the **memory** game from the menu |
+| `quiz_counting_intro` | `quiz_counting_intro.mp3` | id | "Ayo hitung! Ada berapa?" | Each round of the **counting** quiz starts |
+| `quiz_big_intro` | `quiz_big_intro.mp3` | id | "Mana yang besar?" | A **big/small** quiz round asks for "big" |
+| `quiz_small_intro` | `quiz_small_intro.mp3` | id | "Mana yang kecil?" | A **big/small** quiz round asks for "small" |
+| `word_big` | `word_big.mp3` | en | "Big!" | A **CORRECT** big/small answer tap where the tapped card is the big one |
+| `word_small` | `word_small.mp3` | en | "Small!" | A **CORRECT** big/small answer tap where the tapped card is the small one |
+| `praise_1` | `praise_1.mp3` | id | "Pintar!" | Random pick on full-board celebration |
+| `praise_2` | `praise_2.mp3` | id | "Hebat!" | Random pick on full-board celebration |
+| `praise_3` | `praise_3.mp3` | id | "Yeay!" | Random pick on full-board celebration |
+| `praise_4` | `praise_4.mp3` | id | "Bagus sekali!" | Random pick on full-board celebration |
 
 `game_memory_intro` follows the same once-per-entry rule as `game_fruitsort_intro`/the theme
 intros (fires on menu → scene entry, not on resize-restart, not per-round). Still **zero real
-mp3s** shipped across all 17 manifest entries (`public/audio/voice/` still ships only a
+mp3s** shipped across all 19 manifest entries (`public/audio/voice/` still ships only a
 `.gitkeep`) — every game remains fully playable without narration, verified again this slice
 including in the production build specifically.
 
@@ -370,7 +374,7 @@ including in the production build specifically.
   considering for a future slice; not implemented here (out of scope: "persistence beyond PWA
   caching").
 - **Voice preload race** (carried since Slice 4, still unaddressed): once real mp3s exist for
-  any of the 17 manifest entries, spot-check whether the very first theme/game/quiz-round/memory
+  any of the 19 manifest entries, spot-check whether the very first theme/game/quiz-round/memory
   round entered in a fresh session reliably plays its intro line. Still most load-bearing for
   big/small's visual-cue fallback (QuizScene), unchanged this slice.
 - **Post-Slice-6 "audio has stopped working" investigation: resolved as no reproducible code
@@ -604,3 +608,75 @@ now varies, `rows = pairCount` since `cards = pairCount * 2`).
   mode) — an eventual age-mode selector would need to reconcile "always-on progression within a
   session" (memory, now real) against "static difficulty toggle" (the other two, still
   seeds) as two different shapes of the same underlying idea.
+
+---
+
+## Post-Slice-7: bigsmall bilingual reward words (`word_big` / `word_small`)
+
+**Feature:** the bigsmall quiz now confirms a **correct** answer with an English word layered
+shortly after the correct-match chime — "Big!" or "Small!", matching whichever card the toddler
+actually tapped. Every other voice line in this app is Indonesian; these two are a deliberate
+bilingual exception (early English exposure via a reward moment, not the core instruction —
+`quiz_big_intro`/`quiz_small_intro`, the round's actual Indonesian prompt, are unchanged).
+
+- **New manifest entries:** `word_big` ("Big!"), `word_small` ("Small!") — `src/audio/
+  voiceManifest.ts`. Both English; the checklist table below now has a `Lang` column
+  (id/en) since this is the first non-Indonesian pair.
+- **Voice choice lives on the answer, not the round.** `AnswerSpec`'s `emojiScale` variant
+  (`src/data/quizGames.ts`) gained a required `voice: VoiceKey` field, set per-answer
+  (`scaleFactor: BIG_SCALE` → `word_big`, `SMALL_SCALE` → `word_small`) rather than derived from
+  `round.prompt.target` on the scene side. Whichever card is tapped correct is definitionally
+  the target, so the answer's own size already determines the right word — no separate lookup,
+  no new state on `QuizScene`. `dots` answers (counting) don't carry a `voice` field at all; the
+  type only requires it where it's meaningful.
+- **Chime, then word ~150ms later — not synchronous.** Every existing sfx+voice pairing in this
+  app (`sfx('celebrate')` immediately followed by `voice(randomPraiseKey())`, in Match/Sort/
+  Quiz/MemoryScene) calls both on the same line, back to back. This is the first case that
+  *deliberately* doesn't: `QuizScene.handleCorrect()` schedules the word via `this.time.
+  delayedCall(150, () => AudioManager.voice(wordVoice))`, per spec ("layer naturally rather
+  than queue"). Wrong answers are untouched — `handleWrong()` still only calls `sfx('wrong')`.
+- **Graceful absence, unchanged mechanism.** No new guard was needed: `AudioManager.voice()`
+  already no-ops when a buffer never loaded (missing file, still the default state — see
+  below), so a missing `word_big.mp3`/`word_small.mp3` degrades to "chime only," identical to
+  every other missing voice line in this app today.
+- **`npm run verify:audio` extended with a real checkpoint, not skipped.** This surfaced a real
+  gap in the existing tooling: `verify-audio-paths.ts`'s AudioContext-wrapping technique can
+  only observe a voice line by watching for `AudioBufferSourceNode.start()` — which `voice()`
+  never reaches when its buffer is missing (`if (!buffer) return`, before touching WebAudio at
+  all). Since this repo ships **zero real mp3s** by design (every prior slice's stated state,
+  still true), that path is permanently dead for every voice line in the current test
+  environment, not just these two. Fix: `AudioManager.ts` gained a dev-only `debugVoiceLog:
+  {key, t}[]` field that `voice()` pushes to unconditionally (before its mute/buffer guards),
+  gated behind `import.meta.env.DEV` — same "stripped from production" pattern and rationale as
+  `main.ts`'s `window.__game` hook, exposed the same way via a new `window.__audioManager` in
+  `AudioManager.ts` itself. This records that the *call* happened regardless of whether audio
+  would actually be audible, which is exactly what "assert the call path fires" means. Verified
+  directly (not just reasoned about) that both the `window.__audioManager` write and the
+  `debugVoiceLog.push(...)` call are dead-code-eliminated from the production bundle
+  (`import.meta.env.DEV` false there) — `grep`'d `dist/assets/index-*.js` post-build: zero
+  matches for `__audioManager`; `debugVoiceLog` appears exactly once, as the field's empty-array
+  initializer, with no `.push` call anywhere near it. New checkpoints in `verify:audio`'s
+  linear script (after the counting-quiz section, before Memory): bigsmall wrong tap → boop
+  fires, `debugVoiceLog` stays empty; bigsmall correct tap → chime fires (3 oscillators) *and*
+  a `voice()` call for the tapped answer's own `voice` key lands 100–400ms after the tap (a
+  generous window around the spec's ~150ms, wide enough to tolerate real dispatch/timer
+  overhead while still catching a regression to 0ms-synchronous or "never fires").
+- **Verification:** `npm run verify:audio` passes end to end, all prior checkpoints unaffected
+  (bigsmall word voice fired ~136ms after the chime in the actual run). A temporary Playwright
+  script (`scripts/tmp-verify-bigsmall.ts` — written, run, deleted; confirmed absent via `git
+  status` and `grep -rn "tmp-verify" scripts/`) additionally: ran the standard full 12-entry
+  sweep at both viewports (390×844, 768×1024), zero console errors; drove several live bigsmall
+  rounds at each viewport until both a `word_big`-card and a `word_small`-card round had been
+  sampled, confirming the answer's `voice` field always matches its own `scaleFactor` (never
+  hardcoded/swapped) and that the call actually reaches `AudioManager.voice()` on a real tap, not
+  just by reading static data. `npm run build` re-run clean (existing chunk-size warning only,
+  pre-existing and unrelated — see earlier decisions entry).
+- **File map:** `src/audio/voiceManifest.ts` (2 new keys/entries + updated doc comment on
+  `VoiceLine.text`), `src/data/quizGames.ts` (`AnswerSpec.emojiScale.voice`, both bigsmall
+  answers populate it), `src/scenes/QuizScene.ts` (`handleCorrect()`'s new delayed-voice branch),
+  `src/audio/AudioManager.ts` (`debugVoiceLog` field + `window.__audioManager` dev hook),
+  `scripts/verify-audio-paths.ts` (`readAndClearVoiceLog()` helper + the new bigsmall section).
+- No app-code defects found in the existing scenes/data — the only real gap uncovered was in
+  the verification tooling's own reach (couldn't observe voice calls at all without real mp3s),
+  fixed as above, same category as Slice 7's own "every bug this slice found was in the
+  verification tooling" note.

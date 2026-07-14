@@ -447,6 +447,16 @@ export class QuizScene extends Phaser.Scene {
 
   private handleCorrect(card: AnswerCardState): void {
     AudioManager.sfx('correct');
+    // Bilingual reward pattern (bigsmall only, per its answers' own `voice`
+    // field — see quizGames.ts): the English word layers in ~150ms after
+    // the chime starts rather than queuing right behind it, so the two read
+    // as one overlapping "ta-da, Big!" moment instead of two separate
+    // sounds back to back. Missing word mp3s fall through AudioManager.voice's
+    // own buffer-presence guard — chime-only is exactly today's behavior.
+    if (card.answer.kind === 'emojiScale') {
+      const wordVoice = card.answer.voice;
+      this.time.delayedCall(150, () => AudioManager.voice(wordVoice));
+    }
     this.answerCards.forEach((c) => c.container.disableInteractive());
 
     this.tweens.add({
